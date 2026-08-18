@@ -84,9 +84,12 @@ class NasaApiClient:
                         "30 req/hora y 50 req/dia. Solicita tu key en https://api.nasa.gov/"
                     )
                 resp.raise_for_status()
-                if resp.headers.get("content-type", "").startswith("application/json"):
+                # Intentar JSON siempre (EONET devuelve application/rss+xml
+                # aunque el cuerpo sea JSON valido). Si falla, devolver bytes.
+                try:
                     return resp.json()
-                return resp.content
+                except ValueError:
+                    return resp.content
             except NasaApiError:
                 raise
             except (requests.RequestException, ValueError) as exc:
