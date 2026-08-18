@@ -12,6 +12,15 @@ from app.stats import (
     donki_gst_kp_stats, donki_recent_events,
 )
 
+# Plantilla oscura comun para todos los graficos
+_DARK_LAYOUT = dict(
+    template="plotly_dark",
+    paper_bgcolor="rgba(0,0,0,0)",
+    plot_bgcolor="rgba(0,0,0,0)",
+    font=dict(color="#e8eaf6", size=12),
+    margin=dict(l=40, r=20, t=50, b=40),
+)
+
 
 def register(app: dash.Dash) -> None:
 
@@ -30,8 +39,9 @@ def register(app: dash.Dash) -> None:
     )
     def update_donki(donki_data):
         empty = go.Figure()
-        empty.update_layout(template="plotly_white", title="Sin datos")
-        defaults = ("--", "--", "--", "--", "--", "--", empty, empty, empty, "Pulsa 'Consultar'.")
+        empty.update_layout(title="Sin datos — pulsa Consultar", **_DARK_LAYOUT)
+        defaults = ("--", "--", "--", "--", "--", "--", empty, empty, empty,
+                    html.Div("Pulsa 'Consultar'.", className="text-muted p-3"))
 
         if not donki_data:
             return defaults
@@ -48,60 +58,70 @@ def register(app: dash.Dash) -> None:
 
         # Barras por tipo
         fig_bar = go.Figure()
+        colors = ["#fc3d21", "#ffb74d", "#42a5f5", "#ab47bc",
+                  "#66bb6a", "#8d6e63", "#26a69a"]
         fig_bar.add_trace(go.Bar(
             x=list(counts.keys()), y=list(counts.values()),
-            marker_color=["#e53935", "#fb8c00", "#1e88e5", "#8e24aa",
-                          "#43a047", "#6d4c41", "#00897b"][:len(counts)],
+            marker_color=colors[:len(counts)],
+            marker_line_width=0,
         ))
         fig_bar.update_layout(
-            title="Conteo de eventos por tipo",
-            xaxis_title="Tipo", yaxis_title="Número de eventos",
-            template="plotly_white",
+            title="Conteo de eventos por tipo", **_DARK_LAYOUT,
+            xaxis_title="Tipo", yaxis_title="Eventos",
         )
 
         # Serie temporal
         ts = donki_time_series(donki_data)
         fig_ts = go.Figure()
         if not ts.empty:
-            for col in ts.columns:
+            line_colors = ["#fc3d21", "#ffb74d", "#42a5f5", "#ab47bc",
+                           "#66bb6a", "#8d6e63", "#26a69a"]
+            for i, col in enumerate(ts.columns):
                 fig_ts.add_trace(go.Scatter(
                     x=ts.index, y=ts[col], name=col, mode="lines+markers",
+                    line=dict(color=line_colors[i % len(line_colors)], width=2),
+                    marker=dict(size=5),
                 ))
         fig_ts.update_layout(
-            title="Eventos por día y tipo",
+            title="Eventos por día y tipo", **_DARK_LAYOUT,
             xaxis_title="Fecha", yaxis_title="Eventos",
-            template="plotly_white", hovermode="x unified",
-            legend=dict(orientation="h", y=1.1),
+            hovermode="x unified", legend=dict(orientation="h", y=1.12),
         )
 
         # Flares por clase
         flare_classes = donki_flare_classes(donki_data.get("FLR", []))
         fig_flr = go.Figure()
         if flare_classes:
-            # Ordenar X, M, C, B, A
             order = ["X", "M", "C", "B", "A"]
             ordered = {k: flare_classes.get(k, 0) for k in order if k in flare_classes}
             fig_flr.add_trace(go.Bar(
                 x=list(ordered.keys()), y=list(ordered.values()),
-                marker_color=["#d32f2f", "#f57c00", "#fbc02d", "#7986cb", "#90caf9"][:len(ordered)],
+                marker_color=["#ff5252", "#ff9800", "#ffd54f", "#7986cb", "#90caf9"][:len(ordered)],
+                marker_line_width=0,
             ))
         fig_flr.update_layout(
-            title="Flares por clase (X>M>C>B>A)",
+            title="Flares por clase (X>M>C>B>A)", **_DARK_LAYOUT,
             xaxis_title="Clase", yaxis_title="Número",
-            template="plotly_white",
         )
 
         # Tabla recientes
         recent = donki_recent_events(donki_data, limit=20)
         if recent.empty:
-            table = html.Div("Sin eventos recientes.")
+            table = html.Div("Sin eventos recientes.", className="text-muted p-3")
         else:
             table = dt.DataTable(
                 data=recent.to_dict("records"),
                 columns=[{"name": c, "id": c} for c in recent.columns],
                 style_table={"overflowX": "auto", "maxHeight": "320px", "overflowY": "auto"},
-                style_cell={"textAlign": "left", "padding": "4px", "fontSize": "12px"},
-                style_header={"fontWeight": "bold", "backgroundColor": "#f5f5f5"},
+                style_cell={
+                    "textAlign": "left", "padding": "6px", "fontSize": "12px",
+                    "backgroundColor": "#1a2033", "color": "#e8eaf6",
+                    "border": "1px solid #2a3149",
+                },
+                style_header={
+                    "fontWeight": "bold", "backgroundColor": "#131826",
+                    "color": "#64ffda", "border": "1px solid #2a3149",
+                },
                 page_size=15,
             )
 

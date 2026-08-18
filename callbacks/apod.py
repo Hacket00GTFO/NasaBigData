@@ -36,13 +36,12 @@ def register(app: dash.Dash) -> None:
         if info["media_type"] == "image":
             media = html.Img(
                 src=info["hdurl"] or info["url"],
-                className="img-fluid rounded shadow-sm",
-                style={"maxHeight": "600px"},
+                className="apod-img img-fluid",
             )
         elif info["media_type"] == "video":
             media = html.Iframe(
                 src=info["url"], className="w-100",
-                style={"height": "500px", "border": "none"},
+                style={"height": "500px", "border": "none", "borderRadius": "12px"},
             )
 
         return (

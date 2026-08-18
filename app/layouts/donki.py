@@ -5,48 +5,37 @@ import dash_bootstrap_components as dbc
 from dash import dcc, html
 
 
+def _stat(value_id: str, title: str) -> dbc.Card:
+    return dbc.Card(dbc.CardBody([
+        html.H6(title),
+        html.H4(id=value_id, children="--"),
+    ]), className="stat-card")
+
+
 def build_donki_layout() -> html.Div:
     return html.Div([
         dbc.Row([
-            dbc.Col(dbc.Card(dbc.CardBody([
-                html.H6("CME", className="text-muted"),
-                html.H4(id="donki-stat-cme", children="--"),
-            ]), className="text-center"), width=2),
-            dbc.Col(dbc.Card(dbc.CardBody([
-                html.H6("Flares (FLR)", className="text-muted"),
-                html.H4(id="donki-stat-flr", children="--"),
-            ]), className="text-center"), width=2),
-            dbc.Col(dbc.Card(dbc.CardBody([
-                html.H6("Tormentas geomag. (GST)", className="text-muted"),
-                html.H4(id="donki-stat-gst", children="--"),
-            ]), className="text-center"), width=2),
-            dbc.Col(dbc.Card(dbc.CardBody([
-                html.H6("Kp máximo", className="text-muted"),
-                html.H4(id="donki-stat-kp", children="--"),
-            ]), className="text-center"), width=2),
-            dbc.Col(dbc.Card(dbc.CardBody([
-                html.H6("SEP", className="text-muted"),
-                html.H4(id="donki-stat-sep", children="--"),
-            ]), className="text-center"), width=2),
-            dbc.Col(dbc.Card(dbc.CardBody([
-                html.H6("HSS", className="text-muted"),
-                html.H4(id="donki-stat-hss", children="--"),
-            ]), className="text-center"), width=2),
+            dbc.Col(_stat("donki-stat-cme", "CME"), width=2),
+            dbc.Col(_stat("donki-stat-flr", "Flares"), width=2),
+            dbc.Col(_stat("donki-stat-gst", "Tormentas"), width=2),
+            dbc.Col(_stat("donki-stat-kp", "Kp máximo"), width=2),
+            dbc.Col(_stat("donki-stat-sep", "SEP"), width=2),
+            dbc.Col(_stat("donki-stat-hss", "HSS"), width=2),
         ], className="mb-4 g-3"),
 
-        html.H5("Eventos por tipo"),
+        html.Div("Distribución de eventos", className="section-title"),
         dcc.Graph(id="donki-bar-types", style={"height": "320px"}),
-        html.Hr(),
-        html.H5("Serie temporal de eventos"),
+
+        html.Div("Evolución temporal", className="section-title"),
         dcc.Graph(id="donki-time-series", style={"height": "380px"}),
-        html.Hr(),
+
         dbc.Row([
             dbc.Col([
-                html.H5("Distribución de flares por clase"),
+                html.Div("Flares por clase", className="section-title"),
                 dcc.Graph(id="donki-flare-classes", style={"height": "320px"}),
             ], width=6),
             dbc.Col([
-                html.H5("Eventos recientes"),
+                html.Div("Eventos recientes", className="section-title"),
                 html.Div(id="donki-recent-table"),
             ], width=6),
         ]),

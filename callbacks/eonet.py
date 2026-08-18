@@ -12,6 +12,17 @@ from app.stats import (
     eonet_sources_count,
 )
 
+_DARK_LAYOUT = dict(
+    template="plotly_dark",
+    paper_bgcolor="rgba(0,0,0,0)",
+    plot_bgcolor="rgba(0,0,0,0)",
+    font=dict(color="#e8eaf6", size=12),
+    margin=dict(l=40, r=20, t=50, b=40),
+)
+
+# Paleta para categorias EONET
+_CAT_COLORS = px.colors.qualitative.Bold
+
 
 def register(app: dash.Dash) -> None:
 
@@ -27,7 +38,7 @@ def register(app: dash.Dash) -> None:
     )
     def update_eonet(eonet_events):
         empty = go.Figure()
-        empty.update_layout(template="plotly_white", title="Sin datos. Pulsa 'Consultar'.")
+        empty.update_layout(title="Sin datos — pulsa Consultar", **_DARK_LAYOUT)
         defaults = ("--", "--", "--", "--", empty, empty, empty)
         if not eonet_events:
             return defaults
@@ -45,27 +56,27 @@ def register(app: dash.Dash) -> None:
             items = sorted(cat_counts.items(), key=lambda x: x[1], reverse=True)
             fig_bar.add_trace(go.Bar(
                 x=[k for k, _ in items], y=[v for _, v in items],
-                marker_color="#26a69a",
+                marker_color=_CAT_COLORS[:len(items)],
+                marker_line_width=0,
             ))
         fig_bar.update_layout(
-            title="Eventos por categoría",
+            title="Eventos por categoría", **_DARK_LAYOUT,
             xaxis_title="Categoría", yaxis_title="Eventos",
-            template="plotly_white",
         )
 
         # Serie temporal
         ts = eonet_time_series(eonet_events)
         fig_ts = go.Figure()
         if not ts.empty:
-            for col in ts.columns:
+            for i, col in enumerate(ts.columns):
                 fig_ts.add_trace(go.Scatter(
                     x=ts.index, y=ts[col], name=col, stackgroup="one",
+                    line=dict(width=0.5, color=_CAT_COLORS[i % len(_CAT_COLORS)]),
                 ))
         fig_ts.update_layout(
-            title="Eventos por día y categoría (apilado)",
+            title="Eventos por día y categoría (apilado)", **_DARK_LAYOUT,
             xaxis_title="Fecha", yaxis_title="Eventos",
-            template="plotly_white", hovermode="x unified",
-            legend=dict(orientation="h", y=1.1),
+            hovermode="x unified", legend=dict(orientation="h", y=1.12),
         )
 
         # Mapa
@@ -75,16 +86,19 @@ def register(app: dash.Dash) -> None:
             fig_map = px.scatter_mapbox(
                 map_df, lat="lat", lon="lon", color="category",
                 hover_name="title", hover_data={"date": True, "lat": False, "lon": False},
+                color_discrete_sequence=_CAT_COLORS,
                 zoom=1, height=560,
             )
             fig_map.update_layout(
-                mapbox_style="open-street-map",
+                mapbox_style="carto-darkmatter",
+                paper_bgcolor="rgba(0,0,0,0)",
                 margin=dict(l=0, r=0, t=0, b=0),
-                legend=dict(orientation="h", y=1.02),
+                legend=dict(orientation="h", y=1.02, bgcolor="rgba(0,0,0,0)"),
+                font=dict(color="#e8eaf6"),
             )
         else:
             fig_map.update_layout(
-                template="plotly_white", title="Sin coordenadas disponibles.",
+                title="Sin coordenadas disponibles.", **_DARK_LAYOUT,
             )
 
         return str(total), str(n_cats), str(n_srcs), top_cat, fig_bar, fig_ts, fig_map
