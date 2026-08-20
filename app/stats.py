@@ -40,8 +40,7 @@ def donki_time_series(donki_all: Dict[str, List[dict]]) -> pd.DataFrame:
         return pd.DataFrame()
     df = pd.DataFrame(rows)
     df["date"] = pd.to_datetime(df["date"])
-    pivot = df.pivot_table(index="date", columns="type", values="type",
-                           aggfunc="count", fill_value=0)
+    pivot = pd.crosstab(df["date"], df["type"])
     return pivot.sort_index()
 
 
@@ -130,8 +129,7 @@ def eonet_time_series(events: List[dict]) -> pd.DataFrame:
         return pd.DataFrame()
     df = pd.DataFrame(rows)
     df["date"] = pd.to_datetime(df["date"])
-    pivot = df.pivot_table(index="date", columns="category", values="category",
-                           aggfunc="count", fill_value=0)
+    pivot = pd.crosstab(df["date"], df["category"])
     return pivot.sort_index()
 
 

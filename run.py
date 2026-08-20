@@ -1,4 +1,4 @@
-"""Punto de entrada del dashboard NASA POWER.
+"""Punto de entrada del dashboard NASA.
 
 Uso:
     python run.py
@@ -22,7 +22,7 @@ def main() -> int:
     from app import create_app
 
     app = create_app()
-    print(f"Dashboard NASA POWER arrancando en http://127.0.0.1:{settings.flask_port}")
+    print(f"Dashboard NASA arrancando en http://127.0.0.1:{settings.flask_port}")
     app.run(
         host="127.0.0.1",
         port=settings.flask_port,

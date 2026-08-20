@@ -1,0 +1,453 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NASA Dashboard — Space Weather Analytics</title>
+    <meta name="description" content="Dashboard de clima espacial: actividad solar, eventos terrestres, asteroides e imágenes astronómicas.">
+
+    <!-- Fuentes: Fira Sans (texto) + Fira Code (datos) -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500;600;700&family=Fira+Sans:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+
+    <!-- Plotly.js para gráficos -->
+    <script src="https://cdn.plot.ly/plotly-2.35.2.min.js" charset="utf-8"></script>
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
+
+    <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+
+<!-- ===================== Navbar ===================== -->
+<nav class="navbar" role="navigation" aria-label="Navegación principal">
+    <div class="navbar-inner">
+        <div class="navbar-brand">
+            <div class="navbar-logo" aria-hidden="true">
+                <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <circle cx="12" cy="12" r="10"/>
+                    <path d="M2 12h20"/>
+                    <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>
+                </svg>
+            </div>
+            <div class="navbar-titles">
+                <span class="navbar-title">NASA</span>
+                <span class="navbar-subtitle">Space Weather Analytics</span>
+            </div>
+        </div>
+        <div class="navbar-actions">
+            <button id="btn-refresh" class="btn-ghost" type="button" title="Recargar datos" aria-label="Recargar datos">
+                <i data-lucide="refresh-cw"></i>
+            </button>
+            <span id="status-badge" class="badge badge-warn">
+                <span class="badge-dot"></span>
+                DEMO_KEY
+            </span>
+        </div>
+    </div>
+</nav>
+
+<!-- ===================== Layout principal ===================== -->
+<div class="layout">
+
+    <!-- ===== Sidebar ===== -->
+    <aside class="sidebar" aria-label="Panel de control">
+        <div class="sidebar-header">
+            <i data-lucide="sliders-horizontal" class="sidebar-header-icon"></i>
+            <h2 class="sidebar-title">Panel de control</h2>
+        </div>
+
+        <!-- Filtro DONKI -->
+        <div class="filter-group">
+            <div class="filter-label-row">
+                <i data-lucide="zap" class="filter-icon"></i>
+                <label for="donki-start">Clima espacial (DONKI)</label>
+            </div>
+            <p class="filter-hint">Eyecciones de masa coronal, flares, tormentas</p>
+            <div class="date-range">
+                <div class="date-field">
+                    <span class="date-field-label">Inicio</span>
+                    <input type="date" id="donki-start" class="date-input" aria-label="Fecha inicio DONKI">
+                </div>
+                <div class="date-field">
+                    <span class="date-field-label">Fin</span>
+                    <input type="date" id="donki-end" class="date-input" aria-label="Fecha fin DONKI">
+                </div>
+            </div>
+        </div>
+
+        <!-- Filtro EONET -->
+        <div class="filter-group">
+            <div class="filter-label-row">
+                <i data-lucide="globe" class="filter-icon"></i>
+                <label for="eonet-start">Eventos Tierra (EONET)</label>
+            </div>
+            <p class="filter-hint">Incendios, tormentas, volcanes, hielo</p>
+            <div class="date-range">
+                <div class="date-field">
+                    <span class="date-field-label">Inicio</span>
+                    <input type="date" id="eonet-start" class="date-input" aria-label="Fecha inicio EONET">
+                </div>
+                <div class="date-field">
+                    <span class="date-field-label">Fin</span>
+                    <input type="date" id="eonet-end" class="date-input" aria-label="Fecha fin EONET">
+                </div>
+            </div>
+        </div>
+
+        <!-- Filtro NeoWs -->
+        <div class="filter-group">
+            <div class="filter-label-row">
+                <i data-lucide="orbit" class="filter-icon"></i>
+                <label for="neo-start">Asteroides (NeoWs)</label>
+            </div>
+            <p class="filter-hint">Máximo 7 días (limitación de la API)</p>
+            <div class="date-range">
+                <div class="date-field">
+                    <span class="date-field-label">Inicio</span>
+                    <input type="date" id="neo-start" class="date-input" aria-label="Fecha inicio NeoWs">
+                </div>
+                <div class="date-field">
+                    <span class="date-field-label">Fin</span>
+                    <input type="date" id="neo-end" class="date-input" aria-label="Fecha fin NeoWs">
+                </div>
+            </div>
+        </div>
+
+        <button id="btn-fetch" class="btn-primary" type="button">
+            <i data-lucide="play" class="btn-icon"></i>
+            <span class="btn-text">Consultar</span>
+            <span class="btn-spinner hidden"></span>
+        </button>
+        <div id="fetch-status" class="fetch-status" role="status" aria-live="polite"></div>
+
+        <div class="sidebar-divider"></div>
+        <div class="sidebar-footer">
+            <span class="sidebar-footer-label">Powered by</span>
+            <span class="sidebar-footer-value">api.nasa.gov</span>
+        </div>
+    </aside>
+
+    <!-- ===== Contenido principal ===== -->
+    <main class="content">
+
+        <!-- ==================================================
+             BENTO OVERVIEW (estilo weather dashboard)
+             ================================================== -->
+        <div class="bento">
+
+            <!-- ===== Columna izquierda: Hero + métricas ===== -->
+            <div class="bento-left">
+
+                <!-- Hero card con gradiente -->
+                <div class="hero-card">
+                    <div class="hero-header">
+                        <div class="hero-location">
+                            <i data-lucide="map-pin"></i>
+                            <span>Tierra · Sistema Solar</span>
+                        </div>
+                        <span class="hero-updated" id="hero-updated">Últ. actualización: --</span>
+                    </div>
+                    <div class="hero-icon">
+                        <i data-lucide="sun-medium"></i>
+                    </div>
+                    <div class="hero-value" id="hero-total">--</div>
+                    <div class="hero-status" id="hero-status">Eventos de clima espacial</div>
+                    <div class="hero-range" id="hero-range">--</div>
+                    <div class="hero-chips">
+                        <div class="hero-chip">
+                            <span class="chip-value" id="chip-cme">--</span>
+                            <span class="chip-label">CMEs</span>
+                        </div>
+                        <div class="hero-chip">
+                            <span class="chip-value" id="chip-flr">--</span>
+                            <span class="chip-label">Flares</span>
+                        </div>
+                        <div class="hero-chip">
+                            <span class="chip-value" id="chip-gst">--</span>
+                            <span class="chip-label">Tormentas</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Métricas (grid 2x3) -->
+                <div class="metrics-grid">
+                    <div class="metric-card">
+                        <div class="metric-label"><i data-lucide="wind"></i> Flares clase X</div>
+                        <div class="metric-value" id="met-flrx">--</div>
+                    </div>
+                    <div class="metric-card">
+                        <div class="metric-label"><i data-lucide="activity"></i> Flares clase M</div>
+                        <div class="metric-value" id="met-flrm">--</div>
+                    </div>
+                    <div class="metric-card">
+                        <div class="metric-label"><i data-lucide="cloud-lightning"></i> Tormentas GST</div>
+                        <div class="metric-value" id="met-gst">--</div>
+                    </div>
+                    <div class="metric-card">
+                        <div class="metric-label"><i data-lucide="radiation"></i> Partículas SEP</div>
+                        <div class="metric-value" id="met-sep">--</div>
+                    </div>
+                    <div class="metric-card">
+                        <div class="metric-label"><i data-lucide="orbit"></i> Asteroides NEO</div>
+                        <div class="metric-value" id="met-neo">--</div>
+                    </div>
+                    <div class="metric-card">
+                        <div class="metric-label"><i data-lucide="alert-triangle"></i> NEOs peligrosos</div>
+                        <div class="metric-value" id="met-neoh">--</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ===== Columna central: días + línea + gauge ===== -->
+            <div class="bento-center">
+
+                <!-- Strip de 7 días -->
+                <div class="days-strip" id="days-strip">
+                    <!-- Generado por JS -->
+                </div>
+
+                <!-- Line chart -->
+                <div class="card">
+                    <div class="card-header">
+                        <h3 class="card-title">Actividad solar (7 días)</h3>
+                        <span class="card-badge">DONKI</span>
+                    </div>
+                    <div id="donki-line-chart" class="chart" style="height:300px;"></div>
+                </div>
+
+                <!-- Gauge + flare classes -->
+                <div class="card">
+                    <div class="card-header">
+                        <h3 class="card-title">Índice geomagnético (Kp)</h3>
+                        <span class="card-badge">Escala 0–9</span>
+                    </div>
+                    <div class="gauge-section">
+                        <!-- Gauge SVG -->
+                        <div class="gauge-wrap">
+                            <svg viewBox="0 0 200 120" class="gauge-svg" aria-label="Índice Kp">
+                                <path d="M 24 104 A 80 80 0 0 1 176 104"
+                                      stroke="#1e2a3a" stroke-width="18" fill="none" stroke-linecap="round"/>
+                                <path id="gauge-arc" d="M 24 104 A 80 80 0 0 1 176 104"
+                                      stroke="#34d399" stroke-width="18" fill="none" stroke-linecap="round"
+                                      stroke-dasharray="0 251.2"/>
+                            </svg>
+                            <div class="gauge-center">
+                                <div class="gauge-label" id="gauge-label">--</div>
+                                <div class="gauge-value" id="gauge-value">--</div>
+                            </div>
+                        </div>
+                        <!-- Lista de clases de flare -->
+                        <div class="flare-list" id="flare-list">
+                            <!-- Generado por JS -->
+                        </div>
+                    </div>
+                    <p class="gauge-note" id="gauge-note">Kp máximo observado en el periodo seleccionado.</p>
+                </div>
+            </div>
+
+            <!-- ===== Columna derecha: recientes + barras EONET ===== -->
+            <div class="bento-right">
+
+                <!-- Card eventos recientes (estilo sunrise/sunset) -->
+                <div class="card recent-card">
+                    <div class="card-header">
+                        <h3 class="card-title">Últimos eventos</h3>
+                    </div>
+                    <div class="recent-row">
+                        <div class="recent-icon recent-icon-red">
+                            <i data-lucide="zap"></i>
+                        </div>
+                        <div class="recent-info">
+                            <span class="recent-label">CME más reciente</span>
+                            <span class="recent-value" id="recent-cme">--</span>
+                        </div>
+                    </div>
+                    <div class="recent-row">
+                        <div class="recent-icon recent-icon-amber">
+                            <i data-lucide="sun"></i>
+                        </div>
+                        <div class="recent-info">
+                            <span class="recent-label">Flare más reciente</span>
+                            <span class="recent-value" id="recent-flr">--</span>
+                        </div>
+                    </div>
+                    <div class="recent-row">
+                        <div class="recent-icon recent-icon-blue">
+                            <i data-lucide="cloud-lightning"></i>
+                        </div>
+                        <div class="recent-info">
+                            <span class="recent-label">Tormenta más reciente</span>
+                            <span class="recent-value" id="recent-gst">--</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Barras EONET (estilo chances of rain) -->
+                <div class="card bars-card">
+                    <div class="card-header">
+                        <h3 class="card-title">Eventos terrestres</h3>
+                        <span class="card-badge">EONET</span>
+                    </div>
+                    <div class="bars-list" id="eonet-bars">
+                        <!-- Generado por JS -->
+                    </div>
+                    <div class="bars-scale">
+                        <span>0%</span><span>50%</span><span>100%</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ==================================================
+             TABS DE DETALLE
+             ================================================== -->
+        <div class="tabs" role="tablist" aria-label="Secciones de detalle">
+            <button class="tab-btn active" data-tab="donki" role="tab" aria-selected="true" aria-controls="tab-donki">
+                <i data-lucide="zap" class="tab-icon"></i>
+                <span>Clima Espacial</span>
+            </button>
+            <button class="tab-btn" data-tab="eonet" role="tab" aria-selected="false" aria-controls="tab-eonet">
+                <i data-lucide="globe" class="tab-icon"></i>
+                <span>Eventos Tierra</span>
+            </button>
+            <button class="tab-btn" data-tab="neo" role="tab" aria-selected="false" aria-controls="tab-neo">
+                <i data-lucide="orbit" class="tab-icon"></i>
+                <span>Asteroides</span>
+            </button>
+            <button class="tab-btn" data-tab="apod" role="tab" aria-selected="false" aria-controls="tab-apod">
+                <i data-lucide="image" class="tab-icon"></i>
+                <span>APOD</span>
+            </button>
+        </div>
+
+        <!-- Tab: DONKI -->
+        <div class="tab-panel active" id="tab-donki" role="tabpanel">
+            <div class="grid-2">
+                <div class="card">
+                    <div class="card-header">
+                        <h3 class="card-title">Distribución de eventos por tipo</h3>
+                        <span class="card-badge">DONKI</span>
+                    </div>
+                    <div id="donki-bar-types" class="chart" style="height:320px;"></div>
+                </div>
+                <div class="card">
+                    <div class="card-header">
+                        <h3 class="card-title">Evolución por tipo (apilado)</h3>
+                        <span class="card-badge">Timeline</span>
+                    </div>
+                    <div id="donki-time-series" class="chart" style="height:320px;"></div>
+                </div>
+            </div>
+            <div class="card">
+                <div class="card-header">
+                    <h3 class="card-title">Eventos recientes</h3>
+                </div>
+                <div id="donki-recent-table" class="table-wrap"></div>
+            </div>
+        </div>
+
+        <!-- Tab: EONET -->
+        <div class="tab-panel" id="tab-eonet" role="tabpanel">
+            <div class="stat-grid stat-grid-4">
+                <div class="stat-card"><div class="stat-label">Total eventos</div><div class="stat-value" id="eonet-stat-total">--</div></div>
+                <div class="stat-card"><div class="stat-label">Categorías</div><div class="stat-value" id="eonet-stat-cats">--</div></div>
+                <div class="stat-card"><div class="stat-label">Fuentes</div><div class="stat-value" id="eonet-stat-sources">--</div></div>
+                <div class="stat-card"><div class="stat-label">Categoría top</div><div class="stat-value stat-value-sm" id="eonet-stat-top">--</div></div>
+            </div>
+            <div class="card">
+                <div class="card-header">
+                    <h3 class="card-title">Evolución temporal</h3>
+                    <span class="card-badge">Apilado</span>
+                </div>
+                <div id="eonet-time-series" class="chart" style="height:360px;"></div>
+            </div>
+            <div class="card">
+                <div class="card-header">
+                    <h3 class="card-title">Mapa de eventos</h3>
+                    <span class="card-badge">Geo</span>
+                </div>
+                <div id="eonet-map" class="chart" style="height:540px;"></div>
+            </div>
+        </div>
+
+        <!-- Tab: Asteroides -->
+        <div class="tab-panel" id="tab-neo" role="tabpanel">
+            <div class="stat-grid stat-grid-4">
+                <div class="stat-card"><div class="stat-label">Total NEOs</div><div class="stat-value" id="neo-stat-total">--</div></div>
+                <div class="stat-card"><div class="stat-label">Peligrosos</div><div class="stat-value" id="neo-stat-hazard">--</div></div>
+                <div class="stat-card"><div class="stat-label">Dist. mín (km)</div><div class="stat-value stat-value-sm" id="neo-stat-miss">--</div></div>
+                <div class="stat-card"><div class="stat-label">Vel. media (km/h)</div><div class="stat-value stat-value-sm" id="neo-stat-vel">--</div></div>
+            </div>
+            <div class="grid-2">
+                <div class="card">
+                    <div class="card-header">
+                        <h3 class="card-title">Distribución de diámetros</h3>
+                        <span class="card-badge">metros</span>
+                    </div>
+                    <div id="neo-diameter-hist" class="chart" style="height:320px;"></div>
+                </div>
+                <div class="card">
+                    <div class="card-header">
+                        <h3 class="card-title">Peligrosos vs no peligrosos</h3>
+                    </div>
+                    <div id="neo-hazard-pie" class="chart" style="height:320px;"></div>
+                </div>
+            </div>
+            <div class="card">
+                <div class="card-header">
+                    <h3 class="card-title">Asteroides más cercanos</h3>
+                </div>
+                <div id="neo-closest-table" class="table-wrap"></div>
+            </div>
+        </div>
+
+        <!-- Tab: APOD -->
+        <div class="tab-panel" id="tab-apod" role="tabpanel">
+            <div class="apod-layout">
+                <div class="card apod-controls-card">
+                    <div class="card-header">
+                        <h3 class="card-title">Fecha APOD</h3>
+                    </div>
+                    <div class="apod-form">
+                        <input type="date" id="apod-date" class="date-input" aria-label="Fecha APOD">
+                        <button id="btn-apod" class="btn-primary" type="button">
+                            <i data-lucide="play" class="btn-icon"></i>
+                            <span class="btn-text">Obtener APOD</span>
+                            <span class="btn-spinner hidden"></span>
+                        </button>
+                    </div>
+                </div>
+                <div class="apod-info">
+                    <h3 id="apod-title" class="apod-title">--</h3>
+                    <p class="apod-meta">
+                        <span class="meta-item"><strong>Fecha:</strong> <span id="apod-date-text">--</span></span>
+                        <span class="meta-item"><strong>Autor:</strong> <span id="apod-copyright">--</span></span>
+                    </p>
+                </div>
+            </div>
+            <div id="apod-media" class="apod-media"></div>
+            <div class="card">
+                <div class="card-header">
+                    <h3 class="card-title">Explicación</h3>
+                </div>
+                <p id="apod-explanation" class="apod-explanation">Pulsa "Obtener APOD" para ver la imagen astronómica del día.</p>
+            </div>
+        </div>
+
+        <!-- Footer -->
+        <footer class="footer">
+            <p>Dashboard NASA — Estadísticas multi-fuente | DONKI · EONET · NeoWs · APOD</p>
+        </footer>
+    </main>
+</div>
+
+<!-- Loading overlay -->
+<div id="loading-overlay" class="loading-overlay hidden" role="alert" aria-live="assertive">
+    <div class="loading-spinner"></div>
+</div>
+
+<script src="/static/js/app.js"></script>
+</body>
+</html>

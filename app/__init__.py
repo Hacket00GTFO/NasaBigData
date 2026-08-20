@@ -1,43 +1,30 @@
-"""Factory de la aplicacion Flask + Dash.
+"""Factory de la aplicacion Flask (sin Dash).
 
-Crea el servidor Flask y monta la instancia de Dash sobre el.
-Registra los layouts y los callbacks de cada pestaña.
-Usa el tema DARKLY de Bootstrap combinado con custom.css para
-el aspecto espacial oscuro.
+Sirve el frontend estatico (HTML/CSS/JS) desde static/ y expone
+los endpoints REST en /api/* definidos en app.api.
 """
 from __future__ import annotations
 
 import os
 
-import dash
-from flask import Flask
+from flask import Flask, send_from_directory
 
 from config import settings
 
-# Ruta absoluta a la carpeta assets (relativa a este archivo)
-_ASSETS_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "assets")
+_STATIC_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "static")
 
 
-def create_app() -> dash.Dash:
-    """Crea y configura la aplicacion Dash."""
-    server = Flask(__name__)
+def create_app() -> Flask:
+    """Crea y configura la aplicacion Flask."""
+    app = Flask(__name__, static_folder=_STATIC_PATH, static_url_path="/static")
 
-    import dash_bootstrap_components as dbc
+    # Registrar blueprint de la API
+    from app.api import api_bp
+    app.register_blueprint(api_bp)
 
-    app = dash.Dash(
-        __name__,
-        server=server,
-        external_stylesheets=[dbc.themes.DARKLY],
-        suppress_callback_exceptions=True,
-        title="Dashboard NASA",
-        update_title="Consultando NASA...",
-        assets_folder=_ASSETS_PATH,
-    )
-
-    from app.layouts.main import build_main_layout
-    from callbacks import register_all_callbacks
-
-    app.layout = build_main_layout()
-    register_all_callbacks(app)
+    # Ruta raiz: servir index.html
+    @app.route("/")
+    def index():
+        return send_from_directory(_STATIC_PATH, "index.html")
 
     return app

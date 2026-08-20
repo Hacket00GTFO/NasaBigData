@@ -1,7 +1,4 @@
 Flask>=2.3.3,<4.0
-dash>=2.14.0,<3.0
-dash-bootstrap-components>=1.5.0,<2.0
-plotly>=5.18.0,<6.0
 pandas>=2.1.0,<3.0
 requests>=2.31.0,<3.0
 python-dotenv>=1.0.0,<2.0
