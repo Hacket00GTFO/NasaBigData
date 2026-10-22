@@ -30,11 +30,66 @@ const MONTH_NAMES = ["ene", "feb", "mar", "abr", "may", "jun",
 /* ---- State ---- */
 let lastData = null;
 let isLoading = false;
+let isApodLoading = false;
+const requestTimeoutMs = 120000;
+let dateLimits = { donki_days: 365, eonet_days: 3660, neo_days: 7 };
+const renderedTabs = new Set();
 
 /* ============================================================
    Utilities
    ============================================================ */
 const $ = (id) => document.getElementById(id);
+
+function escapeHTML(value) {
+    return String(value ?? "").replace(/[&<>"']/g, char => ({
+        "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
+    })[char]);
+}
+
+async function fetchJSON(url) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), requestTimeoutMs);
+    try {
+        const response = await fetch(url, { signal: controller.signal });
+        let data;
+        try { data = await response.json(); }
+        catch { throw new Error("El servidor devolvió una respuesta inválida."); }
+        if (!response.ok || data.error) {
+            throw new Error(data.error || `Error HTTP ${response.status}`);
+        }
+        return data;
+    } catch (error) {
+        if (controller.signal.aborted) throw new Error("La consulta tardó demasiado. Reintenta en unos momentos.");
+        throw error;
+    } finally {
+        clearTimeout(timer);
+    }
+}
+
+function validateDates() {
+    for (const [source, label] of [["donki", "DONKI"], ["eonet", "EONET"], ["neo", "NeoWs"]]) {
+        const start = $(source + "-start");
+        const end = $(source + "-end");
+        if (!start.value || !end.value || !start.checkValidity() || !end.checkValidity()) {
+            throw new Error(`${label}: completa las fechas válidas de inicio y fin.`);
+        }
+        const span = (Date.parse(end.value) - Date.parse(start.value)) / 86400000 + 1;
+        if (span < 1) throw new Error(`${label}: la fecha inicial debe ser anterior o igual a la final.`);
+        if (span > dateLimits[source + "_days"]) {
+            throw new Error(`${label}: el máximo es ${dateLimits[source + "_days"]} días, incluidos inicio y fin.`);
+        }
+    }
+}
+
+function renderActiveTab() {
+    if (!lastData) return;
+    const tab = document.querySelector(".tab-btn.active").dataset.tab;
+    if (renderedTabs.has(tab)) return;
+    if (tab === "donki") renderDonkiDetail(lastData.donki);
+    if (tab === "eonet") renderEonet(lastData.eonet);
+    if (tab === "neo") renderNeo(lastData.neo);
+    renderedTabs.add(tab);
+}
 
 function showLoading(show) {
     $("loading-overlay").classList.toggle("hidden", !show);
@@ -88,9 +143,9 @@ function emptyFigure(containerId, msg) {
     const el = $(containerId);
     if (!el) return;
     el.innerHTML = "";
-    Plotly.newPlot(containerId, [], {
+    Plotly.react(containerId, [], {
         ...DARK_LAYOUT,
-        title: { text: msg || "Sin datos — pulsa Consultar", font: { color: "#7d8590", size: 13 } },
+        title: { text: msg || "Sin datos disponibles en el periodo", font: { color: "#7d8590", size: 13 } },
         xaxis: { visible: false },
         yaxis: { visible: false },
     }, { responsive: true, displayModeBar: false });
@@ -107,7 +162,7 @@ function renderTable(containerId, records, columns) {
     html += '</tr></thead><tbody>';
     records.forEach(r => {
         html += "<tr>";
-        columns.forEach(c => { html += `<td>${r[c.key] ?? ""}</td>`; });
+        columns.forEach(c => { html += `<td>${escapeHTML(r[c.key])}</td>`; });
         html += "</tr>";
     });
     html += "</tbody></table>";
@@ -138,8 +193,8 @@ function showAllSkeletons() {
    ============================================================ */
 async function initDefaults() {
     try {
-        const resp = await fetch("/api/config");
-        const cfg = await resp.json();
+        const cfg = await fetchJSON("/api/config");
+        dateLimits = cfg.limits || dateLimits;
         const today = new Date();
         const todayStr = formatDate(today);
 
@@ -152,13 +207,15 @@ async function initDefaults() {
             badge.innerHTML = '<span class="badge-dot"></span> DEMO_KEY';
         }
 
-        $("donki-start").value = formatDate(daysAgo(cfg.defaults.donki_days));
+        $("donki-start").value = formatDate(daysAgo(cfg.defaults.donki_days - 1));
         $("donki-end").value = todayStr;
-        $("eonet-start").value = formatDate(daysAgo(cfg.defaults.eonet_days));
+        $("eonet-start").value = formatDate(daysAgo(cfg.defaults.eonet_days - 1));
         $("eonet-end").value = todayStr;
-        $("neo-start").value = formatDate(daysAgo(cfg.defaults.neo_days));
+        $("neo-start").value = formatDate(daysAgo(cfg.defaults.neo_days - 1));
         $("neo-end").value = todayStr;
         $("apod-date").value = todayStr;
+        $("apod-date").min = "1995-06-16";
+        $("apod-date").max = todayStr;
 
         fetchData();
     } catch (e) {
@@ -172,12 +229,17 @@ async function initDefaults() {
    ============================================================ */
 async function fetchData() {
     if (isLoading) return;
+    try { validateDates(); }
+    catch (error) {
+        $("fetch-status").textContent = error.message;
+        return;
+    }
     isLoading = true;
 
     const btn = $("btn-fetch");
     setButtonLoading(btn, true);
-    showLoading(true);
-    showAllSkeletons();
+    $("btn-refresh").disabled = true;
+    if (!lastData) showAllSkeletons();
     $("fetch-status").textContent = "Consultando API de NASA...";
 
     const params = new URLSearchParams({
@@ -190,26 +252,26 @@ async function fetchData() {
     });
 
     try {
-        const resp = await fetch(`/api/fetch?${params}`);
-        const data = await resp.json();
-
-        if (data.error) {
-            $("fetch-status").textContent = "Error: " + data.error;
-            return;
-        }
+        const data = await fetchJSON(`/api/fetch?${params}`);
 
         lastData = data;
         $("fetch-status").textContent = data.status;
 
         renderOverview(data);
-        renderDonkiDetail(data.donki);
-        renderEonet(data.eonet);
-        renderNeo(data.neo);
+        renderedTabs.clear();
+        renderActiveTab();
     } catch (e) {
         $("fetch-status").textContent = "Error: " + e.message;
+        if (!lastData) {
+            const empty = { donki: {}, eonet: {}, neo: {} };
+            renderOverview(empty);
+            renderDonkiDetail({});
+            renderEonet({});
+            renderNeo({});
+        }
     } finally {
         setButtonLoading(btn, false);
-        showLoading(false);
+        $("btn-refresh").disabled = false;
         isLoading = false;
     }
 }
@@ -240,10 +302,11 @@ function renderHero(d) {
     const counts = d.counts || {};
     const total = Object.values(counts).reduce((a, b) => a + b, 0);
 
-    $("hero-total").textContent = total;
-    $("chip-cme").textContent = counts.CME ?? 0;
-    $("chip-flr").textContent = counts.FLR ?? 0;
-    $("chip-gst").textContent = counts.GST ?? 0;
+    const unavailable = !d.counts || Object.keys(d.errors || {}).length > 0;
+    $("hero-total").textContent = unavailable ? "--" : total;
+    $("chip-cme").textContent = counts.CME ?? "--";
+    $("chip-flr").textContent = counts.FLR ?? "--";
+    $("chip-gst").textContent = counts.GST ?? "--";
 
     // Estado según intensidad
     let status = "Actividad solar tranquila";
@@ -251,7 +314,7 @@ function renderHero(d) {
     else if (total > 35) status = "Actividad solar alta";
     else if (total > 15) status = "Actividad solar moderada";
     else if (total > 0) status = "Actividad solar baja";
-    $("hero-status").textContent = status;
+    $("hero-status").textContent = unavailable ? "Datos incompletos o no disponibles" : status;
 
     const s = $("donki-start").value, en = $("donki-end").value;
     $("hero-range").textContent = `${s} → ${en}`;
@@ -314,7 +377,7 @@ function renderLineChart(d) {
         return DAY_NAMES[dt.getDay()];
     });
 
-    Plotly.newPlot("donki-line-chart", [{
+    Plotly.react("donki-line-chart", [{
         type: "scatter",
         mode: "lines+markers+text",
         x: labels,
@@ -350,7 +413,7 @@ function renderGauge(d) {
         label.style.color = "#7d8590";
         value.textContent = "--";
         value.style.color = "#7d8590";
-        note.textContent = "No hay tormentas geomagnéticas en el periodo seleccionado.";
+        note.textContent = d.counts?.GST === undefined ? "Datos de tormentas geomagnéticas no disponibles." : "No hay tormentas geomagnéticas en el periodo seleccionado.";
         return;
     }
 
@@ -390,7 +453,7 @@ function renderFlareList(d) {
         <div class="flare-item">
             <div class="flare-row">
                 <span class="flare-dot" style="background:${it.color};box-shadow:0 0 8px ${it.color};"></span>
-                <span class="flare-count">${fc[it.key] ?? 0}</span>
+                <span class="flare-count">${fc[it.key] ?? (d.counts?.FLR === undefined ? "--" : 0)}</span>
             </div>
             <span class="flare-name">${it.name} · ${it.desc}</span>
         </div>
@@ -402,6 +465,7 @@ function renderRecentEvents(d) {
     const recent = d.recent_events || [];
 
     const findLast = (tipo) => {
+        if (d.latest_events && tipo in d.latest_events) return fmtDateTime(d.latest_events[tipo]);
         const ev = recent.find(r => r.Tipo === tipo);
         return ev ? fmtDateTime(ev["Fecha/Hora"]) : "--";
     };
@@ -417,10 +481,10 @@ function renderMetrics(d, n) {
     const fc = d.flare_classes || {};
     const neo = n.summary || {};
 
-    $("met-flrx").textContent = fc.X ?? 0;
-    $("met-flrm").textContent = fc.M ?? 0;
-    $("met-gst").textContent = counts.GST ?? 0;
-    $("met-sep").textContent = counts.SEP ?? 0;
+    $("met-flrx").textContent = fc.X ?? (counts.FLR === undefined ? "--" : 0);
+    $("met-flrm").textContent = fc.M ?? (counts.FLR === undefined ? "--" : 0);
+    $("met-gst").textContent = counts.GST ?? "--";
+    $("met-sep").textContent = counts.SEP ?? "--";
     $("met-neo").textContent = neo.total ?? "--";
     $("met-neoh").textContent = neo.hazardous ?? "--";
 }
@@ -431,7 +495,7 @@ function renderEonetBars(e) {
     const bar = e.bar_categories;
 
     if (!bar || !bar.labels || bar.labels.length === 0) {
-        el.innerHTML = '<p style="color:var(--text-muted);padding:0.5rem;">Sin eventos terrestres.</p>';
+        el.innerHTML = `<p style="color:var(--text-muted);padding:0.5rem;">${e.total === undefined ? "Datos terrestres no disponibles." : "Sin eventos terrestres."}</p>`;
         return;
     }
 
@@ -447,8 +511,8 @@ function renderEonetBars(e) {
     })).sort((a, b) => b.value - a.value).slice(0, 6);
 
     el.innerHTML = items.map(it => `
-        <div class="bar-row" title="${it.label}: ${it.value} eventos">
-            <span class="bar-label">${it.label}</span>
+        <div class="bar-row" title="${escapeHTML(it.label)}: ${it.value} eventos">
+            <span class="bar-label">${escapeHTML(it.label)}</span>
             <div class="bar-track">
                 <div class="bar-fill" style="width:${it.width}%;"></div>
             </div>
@@ -471,7 +535,7 @@ function renderDonkiDetail(d) {
     // Barras por tipo
     const types = Object.keys(d.counts);
     const values = types.map(t => d.counts[t]);
-    Plotly.newPlot("donki-bar-types", [{
+    Plotly.react("donki-bar-types", [{
         type: "bar",
         x: types, y: values,
         marker: { color: TYPE_COLORS.slice(0, types.length), line: { width: 0 } },
@@ -493,7 +557,7 @@ function renderDonkiDetail(d) {
             x: ts.dates, y: ts.series[col], name: col, stackgroup: "one",
             line: { width: 0.5, color: TYPE_COLORS[i % TYPE_COLORS.length] },
         }));
-        Plotly.newPlot("donki-time-series", traces, {
+        Plotly.react("donki-time-series", traces, {
             ...DARK_LAYOUT,
             margin: { l: 44, r: 20, t: 16, b: 40 },
             xaxis: { title: "Fecha", gridcolor: "#1c2635" },
@@ -536,7 +600,7 @@ function renderEonet(e) {
             line: { width: 0.5, color: CAT_COLORS[i % CAT_COLORS.length] },
             hovertemplate: `<b>${col}</b>: %{y}<extra></extra>`,
         }));
-        Plotly.newPlot("eonet-time-series", traces, {
+        Plotly.react("eonet-time-series", traces, {
             ...DARK_LAYOUT,
             margin: { l: 44, r: 20, t: 16, b: 40 },
             xaxis: { title: "Fecha", gridcolor: "#1c2635" },
@@ -563,7 +627,7 @@ function renderEonet(e) {
                 customdata: cp.map(p => p.date),
             };
         });
-        Plotly.newPlot("eonet-map", traces, {
+        Plotly.react("eonet-map", traces, {
             mapbox: { style: "carto-darkmatter", zoom: 0.8 },
             paper_bgcolor: "rgba(0,0,0,0)",
             margin: { l: 0, r: 0, t: 0, b: 0 },
@@ -581,6 +645,10 @@ function renderEonet(e) {
 function renderNeo(n) {
     if (!n || !n.summary || n.summary.total === 0) {
         ["neo-stat-total", "neo-stat-hazard", "neo-stat-miss", "neo-stat-vel"].forEach(id => $(id).textContent = "--");
+        if (n?.summary?.total === 0) {
+            $("neo-stat-total").textContent = "0";
+            $("neo-stat-hazard").textContent = "0";
+        }
         emptyFigure("neo-diameter-hist");
         emptyFigure("neo-hazard-pie");
         $("neo-closest-table").innerHTML = '<p style="color:var(--text-muted);padding:1rem;text-align:center;">Sin datos.</p>';
@@ -594,7 +662,7 @@ function renderNeo(n) {
     $("neo-stat-vel").textContent = s.vel_med ? fmtNum(s.vel_med) : "--";
 
     if (n.diameters && n.diameters.length > 0) {
-        Plotly.newPlot("neo-diameter-hist", [{
+        Plotly.react("neo-diameter-hist", [{
             type: "histogram", x: n.diameters, nbinsx: 30,
             marker: { color: "#3b82f6", line: { width: 0 } },
         }], {
@@ -610,7 +678,7 @@ function renderNeo(n) {
 
     const hc = n.hazard_counts;
     if (hc && (hc.hazardous > 0 || hc.no_hazardous > 0)) {
-        Plotly.newPlot("neo-hazard-pie", [{
+        Plotly.react("neo-hazard-pie", [{
             type: "pie",
             labels: ["Peligrosos", "No peligrosos"],
             values: [hc.hazardous, hc.no_hazardous],
@@ -643,23 +711,20 @@ function renderNeo(n) {
    APOD
    ============================================================ */
 async function fetchApod() {
+    if (isApodLoading) return;
     const apodDate = $("apod-date").value;
-    if (!apodDate) return;
+    if (!apodDate || !$("apod-date").checkValidity()) {
+        $("apod-explanation").textContent = "Elige una fecha válida entre 1995-06-16 y hoy.";
+        return;
+    }
+    isApodLoading = true;
 
     const btn = $("btn-apod");
     setButtonLoading(btn, true);
     $("apod-media").innerHTML = '<div class="skeleton-block" style="width:100%;height:400px;"></div>';
 
     try {
-        const resp = await fetch(`/api/apod?date=${apodDate}`);
-        const data = await resp.json();
-
-        if (data.error) {
-            $("apod-title").textContent = "Error";
-            $("apod-explanation").textContent = data.error;
-            $("apod-media").innerHTML = "";
-            return;
-        }
+        const data = await fetchJSON(`/api/apod?date=${encodeURIComponent(apodDate)}`);
 
         $("apod-title").textContent = data.title || "--";
         $("apod-date-text").textContent = data.date || "--";
@@ -667,18 +732,35 @@ async function fetchApod() {
         $("apod-explanation").textContent = data.explanation || "--";
 
         const mediaEl = $("apod-media");
+        const mediaURL = new URL(data.url);
+        if (mediaURL.protocol !== "https:") throw new Error("La URL del contenido no es segura.");
         if (data.media_type === "image") {
-            mediaEl.innerHTML = `<img class="apod-img" src="${data.hdurl || data.url}" alt="${data.title || 'APOD'}" loading="lazy">`;
+            const image = document.createElement("img");
+            image.className = "apod-img";
+            image.src = mediaURL.href;
+            image.alt = data.title || "APOD";
+            image.loading = "lazy";
+            image.decoding = "async";
+            mediaEl.replaceChildren(image);
         } else if (data.media_type === "video") {
-            mediaEl.innerHTML = `<iframe class="apod-video" src="${data.url}" title="${data.title || 'APOD'}"></iframe>`;
+            const video = document.createElement("iframe");
+            video.className = "apod-video";
+            video.src = mediaURL.href;
+            video.title = data.title || "APOD";
+            video.loading = "lazy";
+            video.referrerPolicy = "no-referrer";
+            video.setAttribute("sandbox", "allow-scripts allow-same-origin allow-presentation");
+            mediaEl.replaceChildren(video);
         } else {
             mediaEl.innerHTML = "";
         }
     } catch (e) {
+        $("apod-title").textContent = "Error";
         $("apod-explanation").textContent = "Error de conexión: " + e.message;
         $("apod-media").innerHTML = "";
     } finally {
         setButtonLoading(btn, false);
+        isApodLoading = false;
     }
 }
 
@@ -699,6 +781,7 @@ function initTabs() {
             btn.setAttribute("aria-selected", "true");
             const panel = $("tab-" + btn.dataset.tab);
             panel.classList.add("active");
+            renderActiveTab();
 
             // Redibujar gráficos Plotly dentro del panel (se renderizaron con display:none)
             panel.querySelectorAll(".js-plotly-plot").forEach(el => {
@@ -721,7 +804,10 @@ document.addEventListener("DOMContentLoaded", () => {
 
     document.querySelectorAll(".date-input").forEach(input => {
         input.addEventListener("keydown", (e) => {
-            if (e.key === "Enter") fetchData();
+            if (e.key === "Enter") {
+                if (input.id === "apod-date") fetchApod();
+                else fetchData();
+            }
         });
     });
 

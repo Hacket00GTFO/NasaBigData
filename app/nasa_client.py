@@ -1,22 +1,13 @@
-"""Cliente HTTP para los endpoints del portal api.nasa.gov.
-
-Cubre:
-- DONKI (Space Weather Database): CME, FLR, GST, SEP, HSS, MPC, RBE
-- EONET (Earth Observations): events, categories, sources
-- NeoWs (Near Earth Objects): feed, stats, browse
-- APOD (Astronomy Picture of the Day)
-
-Incluye:
-- API key inyectada en cada request (DEMO_KEY por defecto).
-- Cache en memoria con TTL configurable.
-- Reintentos con backoff exponencial ante errores transitorios.
-- Manejo claro de errores de rate limit (HTTP 429).
-"""
+"""Cliente NASA compartido: conexiones reutilizadas, caché TTL y concurrencia acotada."""
 from __future__ import annotations
 
-import time
+from collections import OrderedDict
+from concurrent.futures import Future, ThreadPoolExecutor
+from datetime import date as Date
+from email.utils import parsedate_to_datetime
 import threading
-from typing import Dict, List, Optional, Tuple
+import time
+from urllib.parse import urlsplit
 
 import requests
 
@@ -24,200 +15,180 @@ from config import settings
 
 
 class NasaApiError(Exception):
-    """Error devuelto por la API de NASA."""
+    """Error público que nunca incluye la URL autenticada ni la API key."""
+
+    def __init__(self, message, status_code=502):
+        super().__init__(message)
+        self.status_code = status_code
 
 
 class NasaApiClient:
-    """Cliente para el portal api.nasa.gov con cache y reintentos."""
+    DONKI_TYPES = ["CME", "FLR", "GST", "SEP", "HSS", "MPC", "RBE"]
 
-    def __init__(self, timeout: int = 60, max_retries: int = 3):
+    def __init__(self, timeout=20, max_retries=2):
         self.base_url = settings.nasa_api_base_url.rstrip("/")
+        self.donki_url = settings.donki_base_url.rstrip("/")
         self.eonet_url = settings.eonet_base_url.rstrip("/")
         self.api_key = settings.nasa_api_key
         self.timeout = timeout
-        self.max_retries = max_retries
-        self._cache: Dict[Tuple, Tuple[float, object]] = {}
+        self.max_retries = max(1, max_retries)
+        self._cache = OrderedDict()
+        self._inflight = {}
+        self._cooldowns = {}
         self._lock = threading.Lock()
-        self._session = requests.Session()
-        self._session.headers.update({
-            "User-Agent": settings.user_agent,
-            "Accept": "application/json",
-        })
+        self._local = threading.local()
+        self._executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="donki")
 
-    # ------------------------------------------------------------------ #
-    # Cache interno con TTL
-    # ------------------------------------------------------------------ #
-    def _cache_get(self, key: Tuple) -> Optional[object]:
-        now = time.time()
+    @property
+    def _session(self):
+        # Cada trabajador conserva su propia Session y sus conexiones.
+        if not hasattr(self._local, "session"):
+            self._local.session = requests.Session()
+            self._local.session.headers.update({
+                "User-Agent": settings.user_agent, "Accept": "application/json",
+            })
+        return self._local.session
+
+    def _cached(self, key, loader):
+        """Comparte solicitudes en curso para evitar descargas duplicadas."""
         with self._lock:
-            entry = self._cache.get(key)
-            if entry is None:
-                return None
-            ts, value = entry
-            if now - ts > settings.cache_timeout:
-                self._cache.pop(key, None)
-                return None
+            now = time.monotonic()
+            for expired in [k for k, (expires, _) in self._cache.items() if expires <= now]:
+                del self._cache[expired]
+            if key in self._cache:
+                self._cache.move_to_end(key)
+                return self._cache[key][1]
+            pending = self._inflight.get(key)
+            owner = pending is None
+            if owner:
+                pending = self._inflight[key] = Future()
+        if not owner:
+            return pending.result()
+        try:
+            value = loader()
+            with self._lock:
+                if settings.cache_timeout:
+                    self._cache[key] = (time.monotonic() + settings.cache_timeout, value)
+                    while len(self._cache) > settings.cache_max_entries:
+                        self._cache.popitem(last=False)
+            pending.set_result(value)
             return value
+        except Exception as exc:
+            pending.set_exception(exc)
+            raise
+        finally:
+            with self._lock:
+                self._inflight.pop(key, None)
 
-    def _cache_set(self, key: Tuple, value: object) -> None:
-        with self._lock:
-            self._cache[key] = (time.time(), value)
-
-    # ------------------------------------------------------------------ #
-    # Request base con reintentos
-    # ------------------------------------------------------------------ #
-    def _request(self, url: str, params: Dict) -> object:
-        # Inyectar api_key si no esta presente
+    def _request(self, url, params):
         params = dict(params)
-        if "api_key" not in params and "api_key".lower() not in {k.lower() for k in params}:
-            # EONET no usa api_key, solo inyectarla si la URL es de api.nasa.gov
-            if url.startswith(self.base_url):
-                params["api_key"] = self.api_key
-
-        last_exc: Optional[Exception] = None
+        is_nasa = url.startswith(self.base_url + "/")
+        service = urlsplit(url).netloc
+        if is_nasa:
+            params["api_key"] = self.api_key
         for attempt in range(self.max_retries):
+            with self._lock:
+                remaining = self._cooldowns.get(service, 0) - time.monotonic()
+            if remaining > 0:
+                raise NasaApiError(f"Límite de consultas alcanzado. Reintenta en {int(remaining) + 1} segundos.", 429)
             try:
-                resp = self._session.get(url, params=params, timeout=self.timeout)
-                if resp.status_code == 429:
-                    raise NasaApiError(
-                        "Rate limit excedido (HTTP 429). DEMO_KEY esta limitada a "
-                        "30 req/hora y 50 req/dia. Solicita tu key en https://api.nasa.gov/"
-                    )
-                resp.raise_for_status()
-                # Intentar JSON siempre (EONET devuelve application/rss+xml
-                # aunque el cuerpo sea JSON valido). Si falla, devolver bytes.
-                try:
-                    return resp.json()
-                except ValueError:
-                    return resp.content
-            except NasaApiError:
-                raise
-            except (requests.RequestException, ValueError) as exc:
-                last_exc = exc
-                wait = 2 ** attempt
-                time.sleep(wait)
-        raise NasaApiError(f"Fallo tras {self.max_retries} intentos: {last_exc}")
+                with self._session.get(url, params=params, timeout=(5, self.timeout)) as resp:
+                    if resp.status_code == 429:
+                        raw = resp.headers.get("Retry-After", "60")
+                        try:
+                            delay = float(raw)
+                        except ValueError:
+                            try:
+                                delay = parsedate_to_datetime(raw).timestamp() - time.time()
+                            except (ValueError, TypeError, OverflowError):
+                                delay = 60
+                        delay = max(1, min(delay, 3600))
+                        with self._lock:
+                            self._cooldowns[service] = time.monotonic() + delay
+                        raise NasaApiError(f"Límite de consultas alcanzado. Reintenta en {int(delay)} segundos.", 429)
+                    if resp.status_code in (408, 500, 502, 503, 504):
+                        if attempt + 1 < self.max_retries:
+                            time.sleep(2 ** attempt)
+                            continue
+                    if resp.status_code >= 400:
+                        if is_nasa and resp.status_code in (401, 403):
+                            message = "NASA rechazó la API key. Revisa NASA_API_KEY en el servidor."
+                        else:
+                            message = f"El servicio respondió HTTP {resp.status_code}."
+                        raise NasaApiError(message)
+                    try:
+                        return resp.json()
+                    except ValueError:
+                        raise NasaApiError("El servicio devolvió una respuesta JSON inválida.") from None
+            except (requests.Timeout, requests.ConnectionError):
+                if attempt + 1 == self.max_retries:
+                    raise NasaApiError("No se pudo conectar con el servicio NASA en el tiempo disponible.") from None
+                time.sleep(2 ** attempt)
+            except requests.RequestException:
+                raise NasaApiError("Error de comunicación con el servicio NASA.") from None
 
-    # ------------------------------------------------------------------ #
-    # DONKI - Space Weather Database
-    # ------------------------------------------------------------------ #
-    DONKI_TYPES = ["CME", "FLR", "GST", "SEP", "HSS", "MPC", "RBE"]
+    def _get_json(self, key, url, params, expected, field=None, allow_null=False):
+        def load():
+            data = self._request(url, params)
+            if allow_null and data is None:
+                data = []
+            if not isinstance(data, expected):
+                raise NasaApiError("El servicio devolvió una estructura inesperada.")
+            if field:
+                if not isinstance(data.get(field), list if field in ("events", "categories") else dict):
+                    raise NasaApiError("El servicio devolvió una estructura incompleta.")
+                if field in ("events", "categories"):
+                    return data[field]
+            return data
+        return self._cached(key, load)
 
-    def get_donki_events(self, event_type: str, start_date: str, end_date: str) -> List[dict]:
-        """event_type: uno de DONKI_TYPES. Fechas en YYYY-MM-DD."""
+    def get_donki_events(self, event_type, start_date, end_date):
         if event_type not in self.DONKI_TYPES:
-            raise NasaApiError(f"Tipo DONKI invalido: {event_type}")
-        key = ("donki", event_type, start_date, end_date)
-        cached = self._cache_get(key)
-        if cached is not None:
-            return cached
+            raise NasaApiError("Tipo DONKI inválido.")
+        return self._get_json(("donki", event_type, start_date, end_date),
+                              f"{self.donki_url}/{event_type}",
+                              {"startDate": start_date, "endDate": end_date}, list, allow_null=True)
 
-        url = f"{self.base_url}/DONKI/{event_type}"
-        params = {"startDate": start_date, "endDate": end_date}
-        data = self._request(url, params)
-        if not isinstance(data, list):
-            raise NasaApiError(f"Respuesta DONKI inesperada: {type(data)}")
-        self._cache_set(key, data)
-        return data
-
-    def get_donki_all(self, start_date: str, end_date: str) -> Dict[str, List[dict]]:
-        """Descarga todos los tipos DONKI en una sola llamada (cacheado)."""
-        key = ("donki", "all", start_date, end_date)
-        cached = self._cache_get(key)
-        if cached is not None:
-            return cached
-        result: Dict[str, List[dict]] = {}
-        for et in self.DONKI_TYPES:
+    def get_donki_all(self, start_date, end_date):
+        """Devuelve datos disponibles y errores sin cachear fallos como ceros."""
+        futures = {et: self._executor.submit(self.get_donki_events, et, start_date, end_date)
+                   for et in self.DONKI_TYPES}
+        data, errors = {}, {}
+        for event_type, future in futures.items():
             try:
-                result[et] = self.get_donki_events(et, start_date, end_date)
-            except NasaApiError:
-                result[et] = []
-        self._cache_set(key, result)
-        return result
+                data[event_type] = future.result()
+            except NasaApiError as exc:
+                errors[event_type] = str(exc)
+        return data, errors
 
-    # ------------------------------------------------------------------ #
-    # EONET - Earth Observations
-    # ------------------------------------------------------------------ #
-    def get_eonet_events(self, days: int = 180, status: str = "all",
-                         category: Optional[str] = None) -> List[dict]:
-        key = ("eonet", "events", days, status, category)
-        cached = self._cache_get(key)
-        if cached is not None:
-            return cached
-        url = f"{self.eonet_url}/events"
-        params: Dict = {"days": days}
-        if status and status != "all":
-            params["status"] = status
+    def get_eonet_events(self, days=180, status="all", category=None, *, start_date=None, end_date=None):
+        params = {"status": status}
+        if start_date and end_date:
+            params.update(start=start_date, end=end_date)
+        else:
+            params["days"] = days
         if category:
             params["category"] = category
-        data = self._request(url, params)
-        if not isinstance(data, dict) or "events" not in data:
-            raise NasaApiError("Respuesta EONET inesperada")
-        events = data["events"]
-        self._cache_set(key, events)
-        return events
+        return self._get_json(("eonet", tuple(sorted(params.items()))), f"{self.eonet_url}/events",
+                              params, dict, field="events")
 
-    def get_eonet_categories(self) -> List[dict]:
-        key = ("eonet", "categories",)
-        cached = self._cache_get(key)
-        if cached is not None:
-            return cached
-        data = self._request(f"{self.eonet_url}/categories", {})
-        if not isinstance(data, dict) or "categories" not in data:
-            return []
-        cats = data["categories"]
-        self._cache_set(key, cats)
-        return cats
+    def get_eonet_categories(self):
+        return self._get_json(("eonet", "categories"), f"{self.eonet_url}/categories", {}, dict, field="categories")
 
-    # ------------------------------------------------------------------ #
-    # NeoWs - Near Earth Objects
-    # ------------------------------------------------------------------ #
-    def get_neo_feed(self, start_date: str, end_date: str) -> dict:
-        """Feed de NEOs. Maximo 7 dias entre start y end (YYYY-MM-DD)."""
-        key = ("neo", "feed", start_date, end_date)
-        cached = self._cache_get(key)
-        if cached is not None:
-            return cached
-        url = f"{self.base_url}/neo/rest/v1/feed"
-        params = {"start_date": start_date, "end_date": end_date}
-        data = self._request(url, params)
-        if not isinstance(data, dict):
-            raise NasaApiError("Respuesta NeoWs inesperada")
-        self._cache_set(key, data)
-        return data
+    def get_neo_feed(self, start_date, end_date):
+        return self._get_json(("neo", start_date, end_date), f"{self.base_url}/neo/rest/v1/feed",
+                              {"start_date": start_date, "end_date": end_date}, dict, field="near_earth_objects")
 
-    def get_neo_stats(self) -> dict:
-        key = ("neo", "stats",)
-        cached = self._cache_get(key)
-        if cached is not None:
-            return cached
-        data = self._request(f"{self.base_url}/neo/rest/v1/stats", {})
-        if not isinstance(data, dict):
-            return {}
-        self._cache_set(key, data)
-        return data
+    def get_neo_stats(self):
+        return self._get_json(("neo", "stats"), f"{self.base_url}/neo/rest/v1/stats", {}, dict)
 
-    # ------------------------------------------------------------------ #
-    # APOD - Astronomy Picture of the Day
-    # ------------------------------------------------------------------ #
-    def get_apod(self, date: Optional[str] = None, count: Optional[int] = None) -> dict:
-        """date: YYYY-MM-DD. count: numero aleatorio de imagenes."""
-        key = ("apod", date, count)
-        cached = self._cache_get(key)
-        if cached is not None:
-            return cached
-        url = f"{self.base_url}/planetary/apod"
-        params: Dict = {}
-        if date:
-            params["date"] = date
-        if count is not None:
-            params["count"] = count
-        data = self._request(url, params)
-        if not isinstance(data, dict):
-            raise NasaApiError("Respuesta APOD inesperada")
-        self._cache_set(key, data)
-        return data
+    def get_apod(self, date=None, count=None):
+        if date and count is not None:
+            raise NasaApiError("APOD acepta fecha o cantidad, no ambos parámetros.")
+        effective_date = date or (Date.today().isoformat() if count is None else None)
+        params = {"date": effective_date} if effective_date else {"count": count}
+        return self._get_json(("apod", effective_date, count), f"{self.base_url}/planetary/apod",
+                              params, list if count is not None else dict)
 
 
-# Instancia compartida
 nasa_client = NasaApiClient()

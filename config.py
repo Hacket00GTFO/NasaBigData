@@ -7,17 +7,18 @@ valores por defecto seguros (DEMO_KEY) para que la app pueda arrancar.
 from __future__ import annotations
 
 import os
+from pathlib import Path
 from dataclasses import dataclass, field
 
 from dotenv import load_dotenv
 
 # Carga el .env del directorio del proyecto (si existe)
-load_dotenv()
+load_dotenv(Path(__file__).resolve().parent / ".env")
 
 
 def _get_env(name: str, default: str) -> str:
     value = os.getenv(name)
-    return value if value is not None and value.strip() != "" else default
+    return value.strip() if value is not None and value.strip() != "" else default
 
 
 def _get_env_int(name: str, default: int) -> int:
@@ -37,8 +38,9 @@ def _get_env_bool(name: str, default: bool) -> bool:
 @dataclass
 class Settings:
     # NASA API (api.nasa.gov)
-    nasa_api_key: str = field(default_factory=lambda: _get_env("NASA_API_KEY", "DEMO_KEY"))
+    nasa_api_key: str = field(default_factory=lambda: _get_env("NASA_API_KEY", "DEMO_KEY"), repr=False)
     nasa_api_base_url: str = field(default_factory=lambda: _get_env("NASA_API_BASE_URL", "https://api.nasa.gov"))
+    donki_base_url: str = field(default_factory=lambda: _get_env("DONKI_BASE_URL", "https://ccmc.gsfc.nasa.gov/DONKI-API/get"))
     eonet_base_url: str = field(default_factory=lambda: _get_env("EONET_BASE_URL", "https://eonet.gsfc.nasa.gov/api/v3"))
 
     # Rangos por defecto (dias hacia atras)
@@ -48,10 +50,18 @@ class Settings:
 
     # Cache
     cache_timeout: int = field(default_factory=lambda: _get_env_int("CACHE_TIMEOUT", 3600))
+    cache_max_entries: int = field(default_factory=lambda: _get_env_int("CACHE_MAX_ENTRIES", 512))
 
     # Servidor
     flask_port: int = field(default_factory=lambda: _get_env_int("FLASK_PORT", 8050))
-    flask_debug: bool = field(default_factory=lambda: _get_env_bool("FLASK_DEBUG", True))
+    flask_debug: bool = field(default_factory=lambda: _get_env_bool("FLASK_DEBUG", False))
+
+    def __post_init__(self):
+        self.default_donki_days = max(1, min(self.default_donki_days, 365))
+        self.default_eonet_days = max(1, min(self.default_eonet_days, 3660))
+        self.default_neo_days = max(1, min(self.default_neo_days, 7))
+        self.cache_timeout = max(0, self.cache_timeout)
+        self.cache_max_entries = max(1, self.cache_max_entries)
 
     @property
     def user_agent(self) -> str:

@@ -1,149 +1,82 @@
-# Dashboard NASA — Estadísticas Multi-fuente
+# Dashboard NASA — Estadísticas multi-fuente
 
-Dashboard web interactivo que consume varios endpoints del portal [api.nasa.gov](https://api.nasa.gov/) usando una **developer key** declarada en `.env`. Muestra estadísticas de clima espacial (DONKI), eventos terrestres (EONET), asteroides (NeoWs) y la imagen astronómica del día (APOD).
+Dashboard con **Flask + HTML/CSS/JavaScript + Plotly.js**. El servidor carga la clave de `.env`, consulta NASA y entrega al frontend únicamente estadísticas procesadas y configuración pública.
 
-## Stack
+## Instalación y ejecución
 
-- **Python 3.9+**
-- **Flask** + **Dash** (Plotly) para el frontend interactivo
-- **Dash Bootstrap Components** para el diseño
-- **Pandas** para manipulación de datos
-- **Requests** para llamadas HTTP con cache y reintentos
+Requiere Python 3.10 o posterior (se validó con Python 3.12).
 
-## Endpoints usados (base `https://api.nasa.gov`)
-
-| Endpoint | Servicio | Descripción |
-|----------|----------|-------------|
-| `/donki/{CME,FLR,GST,SEP,HSS,MPC,RBE}` | DONKI | Space Weather Database — clima espacial |
-| `https://eonet.gsfc.nasa.gov/api/v3/events` | EONET | Eventos terrestres (incendios, tormentas, volcanes, hielo) |
-| `/neo/rest/v1/feed` | NeoWs | Near Earth Objects — asteroides cercanos |
-| `/planetary/apod` | APOD | Astronomy Picture of the Day |
-
-## Características
-
-- **4 pestañas de visualización:**
-  1. **Clima Espacial (DONKI)** — conteos por tipo (CME/FLR/GST/SEP/HSS), serie temporal, distribución de flares por clase (X/M/C/B), Kp máximo de tormentas geomagnéticas, tabla de eventos recientes
-  2. **Eventos Terrestres (EONET)** — conteos por categoría, serie temporal apilada, mapa interactivo con `scatter_mapbox`, top fuentes
-  3. **Asteroides (NeoWs)** — NEOs por día, distribución de diámetros, peligrosos vs no peligrosos, distancia mínima, velocidad media, tabla de los más cercanos
-  4. **APOD** — imagen astronómica del día con selector de fecha y explicación
-- **Filtros configurables** por pestaña: rangos de fechas independientes para DONKI, EONET y NeoWs
-- **KPI cards** superiores: CMEs, flares solares, tormentas geomagnéticas, asteroides
-- **Cache en memoria** (TTL configurable) y reintentos con backoff exponencial
-- **Manejo de rate limit** HTTP 429 con mensaje claro (DEMO_KEY limitada)
-- **Configuración vía `.env`** (API key, URLs, días por defecto, puerto)
-
-## Instalación
-
-```bash
-# 1. Crear y activar entorno virtual
-python -m venv venv
-# Windows
-venv\Scripts\activate
-# Linux/Mac
-source venv/bin/activate
-
-# 2. Instalar dependencias
-pip install -r requirements.txt
-
-# 3. Configurar variables de entorno
-cp .env.example .env
-# Edita .env y pon tu NASA_API_KEY (solicitada en https://api.nasa.gov/)
-```
-
-### Solicitar tu API key
-
-1. Visita https://api.nasa.gov/
-2. Rellena el formulario "Generate API Key"
-3. Recibirás tu key por email
-4. Pégala en `.env` como `NASA_API_KEY=tu_key_aqui`
-
-> **DEMO_KEY** funciona sin registro pero está limitada a **30 requests/hora** y **50 requests/día**. Para uso intensivo, solicita tu propia key.
-
-## Configuración (.env)
-
-| Variable | Descripción | Default |
-|----------|-------------|---------|
-| `NASA_API_KEY` | Tu developer key de api.nasa.gov | `DEMO_KEY` |
-| `NASA_API_BASE_URL` | URL base de la API | `https://api.nasa.gov` |
-| `EONET_BASE_URL` | URL base de EONET | `https://eonet.gsfc.nasa.gov/api/v3` |
-| `DEFAULT_DONKI_DAYS` | Días hacia atrás para DONKI | `30` |
-| `DEFAULT_EONET_DAYS` | Días hacia atrás para EONET | `180` |
-| `DEFAULT_NEO_DAYS` | Días hacia atrás para NeoWs (máx 7) | `7` |
-| `CACHE_TIMEOUT` | TTL de cache en segundos | `3600` |
-| `FLASK_PORT` | Puerto del servidor | `8050` |
-| `FLASK_DEBUG` | Modo debug | `True` |
-
-## Ejecución
-
-```bash
+```powershell
+python -m venv .venv
+.venv\Scripts\Activate.ps1
+python -m pip install -r requirements.txt
+Copy-Item .env.example .env
+# Edita NASA_API_KEY en .env; conserva tu archivo si ya existe.
 python run.py
 ```
 
-Abre [http://127.0.0.1:8050](http://127.0.0.1:8050) en tu navegador.
+Abre [http://127.0.0.1:8050](http://127.0.0.1:8050). Los valores de entorno del proceso tienen prioridad sobre `.env`. Reinicia el servidor al cambiar la configuración.
 
-## Uso
+## Configuración
 
-1. En el sidebar izquierdo ajusta los **rangos de fechas** para cada fuente (DONKI, EONET, Asteroides).
-2. Pulsa **Consultar** — se descargan los datos de los tres endpoints.
-3. Navega entre las pestañas para ver las estadísticas.
-4. En **APOD** elige una fecha y pulsa **Obtener APOD** para ver la imagen astronómica.
+| Variable | Valor predeterminado | Uso |
+|---|---|---|
+| `NASA_API_KEY` | `DEMO_KEY` | Clave para NeoWs y APOD; permanece en el servidor |
+| `NASA_API_BASE_URL` | `https://api.nasa.gov` | Portal autenticado de NASA |
+| `DONKI_BASE_URL` | `https://ccmc.gsfc.nasa.gov/DONKI-API/get` | API pública actual de DONKI, sin clave |
+| `EONET_BASE_URL` | `https://eonet.gsfc.nasa.gov/api/v3` | API pública EONET, sin clave |
+| `DEFAULT_DONKI_DAYS` | `30` | Días incluidos en el rango inicial (1–365) |
+| `DEFAULT_EONET_DAYS` | `180` | Días incluidos en el rango inicial (1–3660) |
+| `DEFAULT_NEO_DAYS` | `7` | Días incluidos en el rango inicial (1–7) |
+| `CACHE_TIMEOUT` | `3600` | TTL en segundos; `0` desactiva la caché de respuestas |
+| `CACHE_MAX_ENTRIES` | `512` | Límite de respuestas en memoria |
+| `FLASK_PORT` | `8050` | Puerto local |
+| `FLASK_DEBUG` | `False` | Activa depuración solo en desarrollo |
 
-## Notas sobre la API
+La plantilla contiene `DEMO_KEY`. Guarda la clave real exclusivamente en `.env`, excluido de Git. Una clave que haya aparecido en archivos versionados debe reemplazarse en el proveedor; retirarla de la plantilla no elimina el historial.
 
-- **api.nasa.gov** requiere una **developer key** (gratuita) que se solicita en su web.
-- **DEMO_KEY** está limitada a 30 req/hora y 50 req/día. La app cachea respuestas (1h) para minimizar llamadas.
-- **NeoWs feed**: máximo 7 días por request (la app lo recorta automáticamente).
-- **DONKI**: rangos largos devuelven muchos eventos; se recomienda 30 días por defecto.
-- **EONET** no requiere key pero la respeta si se pasa.
+DONKI cambió de dirección el 30 de septiembre de 2026. Se usa la [nueva API oficial de CCMC](https://ccmc.gsfc.nasa.gov/news/major-updates/), que conserva los parámetros y el formato de respuesta. Para usar explícitamente el portal anterior, configura `DONKI_BASE_URL=https://api.nasa.gov/DONKI`; en ese caso el cliente añade la clave.
 
-## Estructura del proyecto
+## Consultas y procesamiento
 
+- `GET /api/config`: estado de configuración, días iniciales y límites; nunca entrega la clave.
+- `GET /api/fetch`: recibe `donki_start`, `donki_end`, `eonet_start`, `eonet_end`, `neo_start`, `neo_end`, todos con formato `YYYY-MM-DD`.
+- `GET /api/apod?date=YYYY-MM-DD`: imagen o video astronómico desde 1995-06-16 hasta hoy.
+
+Los rangos incluyen inicio y fin. Se permite consultar un solo día. NeoWs se limita a siete días incluidos; un rango mayor se rechaza con HTTP 400, sin recortarlo silenciosamente. DONKI y EONET tienen límites de aplicación de 365 y 3660 días, respectivamente.
+
+EONET recibe `start`, `end` y `status=all`, conforme a su [documentación oficial](https://eonet.gsfc.nasa.gov/docs/v3). Las estadísticas utilizan solo geometrías dentro del rango seleccionado; los polígonos se representan en el mapa mediante un vértice.
+
+## Rendimiento y errores
+
+El proceso reutiliza un cliente con caché TTL acotada y conexiones HTTP por trabajador. Las consultas idénticas simultáneas comparten la descarga en curso. DONKI, EONET y NeoWs se solicitan concurrentemente; los siete tipos DONKI se descargan con un máximo de cuatro trabajadores. Cambiar únicamente un rango reutiliza las respuestas vigentes de las otras fuentes.
+
+Solo se reintentan fallos de conexión y respuestas transitorias. HTTP 429 activa una pausa de consultas por host según `Retry-After`. Los fallos no se guardan como listas vacías. `/api/fetch` devuelve HTTP 200 con `partial=true` y `errors` por fuente cuando conserva resultados parciales; un KPI no disponible se devuelve como `null`, distinguido de cero.
+
+El frontend valida los rangos antes de consultar, aplica un tiempo máximo de espera, conserva el resultado anterior ante un error general y evita consultas duplicadas durante la carga. Las gráficas de detalle se dibujan al abrir la pestaña y se actualizan con `Plotly.react`. APOD carga la imagen de tamaño normal, evitando descargar automáticamente la versión HD.
+
+La caché reside en memoria **por proceso**: se pierde al reiniciar y no se comparte entre varios servidores. Para despliegues con múltiples procesos conviene una caché externa. Un resultado completo sin caché necesita nueve solicitudes (siete DONKI, una EONET y una NeoWs); APOD se consulta por separado. El servidor incluido es para desarrollo local.
+
+## Pruebas
+
+```powershell
+.venv\Scripts\python.exe -m unittest discover -s tests -v
+node --check static/js/app.js
 ```
-NasaBigData/
-├── .env.example          # Plantilla de configuración
-├── .gitignore
-├── requirements.txt
-├── README.md
-├── config.py             # Carga de .env y settings
-├── run.py                # Entry point
-├── app/
-│   ├── __init__.py       # Factory Flask+Dash
-│   ├── nasa_client.py    # Cliente api.nasa.gov (DONKI, EONET, NeoWs, APOD)
-│   ├── stats.py          # Funciones estadísticas por endpoint
-│   └── layouts/
-│       ├── main.py       # Layout principal + sidebar + KPIs
-│       ├── donki.py      # Pestaña clima espacial
-│       ├── eonet.py      # Pestaña eventos terrestres
-│       ├── asteroids.py  # Pestaña asteroides
-│       └── apod.py       # Pestaña APOD
-└── callbacks/
-    ├── filters.py        # Filtros globales + KPIs + render tabs
-    ├── donki.py
-    ├── eonet.py
-    ├── asteroids.py
-    └── apod.py
+
+Las pruebas Python funcionan sin red ni consumo de cuota. Cubren caché entre consultas HTTP, expiración y capacidad, concurrencia, errores parciales, respuestas inválidas, reintentos, protección de la clave, fechas, APOD y estadísticas.
+
+## Estructura
+
+```text
+config.py              Carga de .env y configuración
+run.py                 Arranque de Flask
+app/__init__.py        Factory y archivos estáticos
+app/api.py             Validación y agregación REST
+app/nasa_client.py     HTTP, concurrencia, caché y errores
+app/stats.py           Estadísticas con pandas
+static/index.html      Interfaz
+static/js/app.js       Consultas y gráficas
+static/css/style.css   Estilos
+tests/test_nasa.py     Pruebas sin red
 ```
-
-## Tipos de eventos DONKI
-
-| Código | Descripción |
-|--------|-------------|
-| `CME` | Coronal Mass Ejection (eyección de masa coronal) |
-| `FLR` | Solar Flare (flare solar, clases X/M/C/B/A) |
-| `GST` | Geomagnetic Storm (tormenta geomagnética, Kp index) |
-| `SEP` | Solar Energetic Particle |
-| `HSS` | High Speed Stream |
-| `MPC` | Magnetopause Crossing |
-| `RBE` | Radiation Belt Enhancement |
-
-## Categorías EONET
-
-- Wildfires (incendios)
-- Severe Storms (tormentas severas)
-- Volcanoes (volcanes)
-- Sea and Lake Ice (hielo marino/lacustre)
-- Earthquakes (terremotos)
-- Landslides (deslizamientos)
-- Manmade (eventos antrópicos)
-- Snow (nieve)
-- Temp Extremes, Water Color, Drought...

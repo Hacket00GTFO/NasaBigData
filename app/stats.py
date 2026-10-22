@@ -1,12 +1,13 @@
 """Funciones estadisticas sobre los datos de los endpoints de api.nasa.gov.
 
 Operan sobre las estructuras devueltas por NasaApiClient y devuelven
-diccionarios/listas listas para ser consumidas por los callbacks de Dash.
+diccionarios/listas listas para la API REST del frontend.
 """
 from __future__ import annotations
 
 from collections import Counter
 from datetime import datetime
+import math
 from typing import Dict, List, Optional
 
 import pandas as pd
@@ -15,12 +16,18 @@ import pandas as pd
 # ---------------------------------------------------------------------- #
 # DONKI - Space Weather
 # ---------------------------------------------------------------------- #
+def donki_latest_events(donki_all: Dict[str, List[dict]]) -> Dict[str, str]:
+    """Última fecha por tipo, independiente del límite de la tabla reciente."""
+    return {kind: max((ev.get("startTime") or ev.get("eventTime") or ev.get("beginTime") or ""
+                      for ev in events), default="") for kind, events in donki_all.items()}
+
+
 def donki_counts_by_type(donki_all: Dict[str, List[dict]]) -> Dict[str, int]:
     """Cuenta eventos por tipo (CME, FLR, GST, ...)."""
     return {et: len(events) for et, events in donki_all.items()}
 
 
-def donki_time_series(donki_all: Dict[str, List[dict]]) -> pd.DataFrame:
+def donki_time_series(donki_all: Dict[str, List[dict]], start_date=None, end_date=None) -> pd.DataFrame:
     """Serie temporal diaria de eventos por tipo.
 
     Devuelve DataFrame con indice fecha y columnas por tipo.
@@ -36,11 +43,15 @@ def donki_time_series(donki_all: Dict[str, List[dict]]) -> pd.DataFrame:
             except (ValueError, AttributeError):
                 continue
             rows.append({"date": day, "type": et})
-    if not rows:
-        return pd.DataFrame()
-    df = pd.DataFrame(rows)
-    df["date"] = pd.to_datetime(df["date"])
-    pivot = pd.crosstab(df["date"], df["type"])
+    if rows:
+        df = pd.DataFrame(rows)
+        df["date"] = pd.to_datetime(df["date"])
+        pivot = pd.crosstab(df["date"], df["type"])
+    else:
+        pivot = pd.DataFrame()
+    if start_date and end_date:
+        pivot = pivot.reindex(index=pd.date_range(start_date, end_date),
+                              columns=list(donki_all), fill_value=0)
     return pivot.sort_index()
 
 
@@ -62,8 +73,6 @@ def donki_gst_kp_stats(gst_events: List[dict]) -> Dict[str, float]:
     """Estadisticas del Kp index de tormentas geomagneticas."""
     kps: List[float] = []
     for ev in gst_events:
-        for link in ev.get("linkedEvents", []) or []:
-            pass  # no usado
         # GST tiene allKpIndex con kp values
         for kp_entry in ev.get("allKpIndex", []) or []:
             kp = kp_entry.get("kpIndex")
@@ -87,7 +96,7 @@ def donki_recent_events(donki_all: Dict[str, List[dict]], limit: int = 20) -> pd
             rows.append({
                 "Tipo": et,
                 "Fecha/Hora": ts,
-                "ID": ev.get("activityID", ev.get("gstID", ev.get("cmeID", ""))),
+                "ID": ev.get("activityID") or ev.get(f"{et.lower()}ID") or "",
             })
     if not rows:
         return pd.DataFrame()
@@ -141,18 +150,16 @@ def eonet_map_points(events: List[dict]) -> pd.DataFrame:
         if not geoms:
             continue
         geom = geoms[0]
-        coords = geom.get("coordinates", [])
+        coords = geom.get("coordinates", []) or []
         cats = [c.get("title", "?") for c in ev.get("categories", [])]
         cat = cats[0] if cats else "?"
         title = ev.get("title", "")
         date_str = geom.get("date", "")
-        # coordinates puede ser [lon, lat] o [[lon, lat], ...]
-        if coords and isinstance(coords[0], list):
-            for c in coords:
-                if len(c) >= 2:
-                    rows.append({"lat": c[1], "lon": c[0], "category": cat,
-                                 "title": title, "date": date_str})
-        elif len(coords) >= 2:
+        # Polygon usa anillos [[[lon, lat], ...]]; un vértice representa su ubicación.
+        while coords and isinstance(coords[0], list):
+            coords = coords[0]
+        if (len(coords) >= 2 and all(isinstance(v, (int, float)) and math.isfinite(v) for v in coords[:2])
+                and -180 <= coords[0] <= 180 and -90 <= coords[1] <= 90):
             rows.append({"lat": coords[1], "lon": coords[0], "category": cat,
                          "title": title, "date": date_str})
     if not rows:
@@ -189,7 +196,10 @@ def neo_flatten(feed: dict) -> pd.DataFrame:
     rows = []
     for day, items in neos.items():
         for n in items:
-            cad = (n.get("close_approach_data") or [{}])[0]
+            approaches = n.get("close_approach_data") or []
+            cad = next((a for a in approaches if a.get("close_approach_date") == day), {})
+            if not cad and len(approaches) == 1:
+                cad = approaches[0]
             miss = cad.get("miss_distance", {}).get("kilometers")
             vel = cad.get("relative_velocity", {}).get("kilometers_per_hour")
             rows.append({
