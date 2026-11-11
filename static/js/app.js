@@ -628,7 +628,8 @@ function renderEonet(e) {
             };
         });
         Plotly.react("eonet-map", traces, {
-            mapbox: { style: "carto-darkmatter", zoom: 0.8 },
+            // El estilo CARTO anterior exige ahora una clave para las teselas.
+            mapbox: { style: "open-street-map", zoom: 0.8 },
             paper_bgcolor: "rgba(0,0,0,0)",
             margin: { l: 0, r: 0, t: 0, b: 0 },
             legend: { orientation: "h", y: 1.02, bgcolor: "rgba(0,0,0,0)", font: { color: "#c9d1d9", size: 10 } },
@@ -737,10 +738,16 @@ async function fetchApod() {
         if (data.media_type === "image") {
             const image = document.createElement("img");
             image.className = "apod-img";
-            image.src = mediaURL.href;
-            image.alt = data.title || "APOD";
-            image.loading = "lazy";
+            image.alt = data.alt || data.title || "APOD";
+            image.loading = "eager";
             image.decoding = "async";
+            image.addEventListener("error", () => {
+                const message = document.createElement("p");
+                message.className = "media-error";
+                message.textContent = "No se pudo cargar la imagen desde NASA. Puedes abrir la publicación original.";
+                image.replaceWith(message);
+            }, { once: true });
+            image.src = mediaURL.href;
             mediaEl.replaceChildren(image);
         } else if (data.media_type === "video") {
             const video = document.createElement("iframe");
@@ -752,7 +759,19 @@ async function fetchApod() {
             video.setAttribute("sandbox", "allow-scripts allow-same-origin allow-presentation");
             mediaEl.replaceChildren(video);
         } else {
-            mediaEl.innerHTML = "";
+            throw new Error("El tipo de contenido de APOD no es compatible.");
+        }
+        if (data.source_url) {
+            const source = new URL(data.source_url);
+            if (source.protocol === "https:") {
+                const link = document.createElement("a");
+                link.href = source.href;
+                link.target = "_blank";
+                link.rel = "noopener noreferrer";
+                link.className = "apod-source";
+                link.textContent = "Ver publicación original en NASA";
+                mediaEl.append(link);
+            }
         }
     } catch (e) {
         $("apod-title").textContent = "Error";

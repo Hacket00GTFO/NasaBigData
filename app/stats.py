@@ -254,4 +254,6 @@ def apod_summary(apod: dict) -> Dict[str, str]:
         "hdurl": apod.get("hdurl", "") or apod.get("url", ""),
         "media_type": apod.get("media_type", "image"),
         "copyright": apod.get("copyright", "NASA"),
+        "source_url": apod.get("source_url", ""),
+        "alt": apod.get("alt", "") or apod.get("title", "APOD"),
     }

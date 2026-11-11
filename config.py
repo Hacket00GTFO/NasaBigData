@@ -41,6 +41,7 @@ class Settings:
     nasa_api_key: str = field(default_factory=lambda: _get_env("NASA_API_KEY", "DEMO_KEY"), repr=False)
     nasa_api_base_url: str = field(default_factory=lambda: _get_env("NASA_API_BASE_URL", "https://api.nasa.gov"))
     donki_base_url: str = field(default_factory=lambda: _get_env("DONKI_BASE_URL", "https://ccmc.gsfc.nasa.gov/DONKI-API/get"))
+    apod_fallback_base_url: str = field(default_factory=lambda: _get_env("APOD_FALLBACK_BASE_URL", "https://science.nasa.gov/wp-json/wp/v2/apod-basic"))
     eonet_base_url: str = field(default_factory=lambda: _get_env("EONET_BASE_URL", "https://eonet.gsfc.nasa.gov/api/v3"))
 
     # Rangos por defecto (dias hacia atras)

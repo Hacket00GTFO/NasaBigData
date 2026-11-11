@@ -774,6 +774,8 @@ body {
     border: 1px solid var(--border-subtle);
 }
 .apod-video { width: 100%; height: 500px; border: none; border-radius: var(--radius-md); }
+.apod-source { display: block; margin-top: 0.75rem; color: var(--accent-cyan); }
+.media-error { padding: 2rem; color: var(--text-secondary); }
 .apod-explanation { color: var(--text-secondary); line-height: 1.75; font-size: 0.875rem; }
 
 /* ============================================================

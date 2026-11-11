@@ -12,6 +12,7 @@ from urllib.parse import urlsplit
 import requests
 
 from config import settings
+from app.apod import normalize_apod
 
 
 class NasaApiError(Exception):
@@ -187,8 +188,23 @@ class NasaApiClient:
             raise NasaApiError("APOD acepta fecha o cantidad, no ambos parámetros.")
         effective_date = date or (Date.today().isoformat() if count is None else None)
         params = {"date": effective_date} if effective_date else {"count": count}
-        return self._get_json(("apod", effective_date, count), f"{self.base_url}/planetary/apod",
-                              params, list if count is not None else dict)
+        if count is not None:
+            return self._get_json(("apod", None, count), f"{self.base_url}/planetary/apod", params, list)
+
+        def load():
+            data = self._request(f"{self.base_url}/planetary/apod", params)
+            try:
+                return normalize_apod(data, effective_date)
+            except ValueError:
+                # El portal antiguo puede responder 200 con el logo y texto genérico.
+                # El sucesor oficial usa YYMMDD, sin enviarle la API key.
+                short_date = Date.fromisoformat(effective_date).strftime("%y%m%d")
+                data = self._request(f"{settings.apod_fallback_base_url.rstrip('/')}/{short_date}", {})
+                try:
+                    return normalize_apod(data, effective_date)
+                except ValueError as exc:
+                    raise NasaApiError(str(exc)) from None
+        return self._cached(("apod", effective_date, None), load)
 
 
 nasa_client = NasaApiClient()

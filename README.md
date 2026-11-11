@@ -24,6 +24,7 @@ Abre [http://127.0.0.1:8050](http://127.0.0.1:8050). Los valores de entorno del 
 | `NASA_API_KEY` | `DEMO_KEY` | Clave para NeoWs y APOD; permanece en el servidor |
 | `NASA_API_BASE_URL` | `https://api.nasa.gov` | Portal autenticado de NASA |
 | `DONKI_BASE_URL` | `https://ccmc.gsfc.nasa.gov/DONKI-API/get` | API pública actual de DONKI, sin clave |
+| `APOD_FALLBACK_BASE_URL` | `https://science.nasa.gov/wp-json/wp/v2/apod-basic` | Sucesor oficial de APOD si el portal entrega contenido genérico |
 | `EONET_BASE_URL` | `https://eonet.gsfc.nasa.gov/api/v3` | API pública EONET, sin clave |
 | `DEFAULT_DONKI_DAYS` | `30` | Días incluidos en el rango inicial (1–365) |
 | `DEFAULT_EONET_DAYS` | `180` | Días incluidos en el rango inicial (1–3660) |
@@ -53,7 +54,11 @@ El proceso reutiliza un cliente con caché TTL acotada y conexiones HTTP por tra
 
 Solo se reintentan fallos de conexión y respuestas transitorias. HTTP 429 activa una pausa de consultas por host según `Retry-After`. Los fallos no se guardan como listas vacías. `/api/fetch` devuelve HTTP 200 con `partial=true` y `errors` por fuente cuando conserva resultados parciales; un KPI no disponible se devuelve como `null`, distinguido de cero.
 
-El frontend valida los rangos antes de consultar, aplica un tiempo máximo de espera, conserva el resultado anterior ante un error general y evita consultas duplicadas durante la carga. Las gráficas de detalle se dibujan al abrir la pestaña y se actualizan con `Plotly.react`. APOD carga la imagen de tamaño normal, evitando descargar automáticamente la versión HD.
+El frontend valida los rangos antes de consultar, aplica un tiempo máximo de espera, conserva el resultado anterior ante un error general y evita consultas duplicadas durante la carga. Las gráficas de detalle se dibujan al abrir la pestaña y se actualizan con `Plotly.react`. APOD usa la imagen normal del contrato antiguo o `hdurl` cuando el nuevo contrato solo ofrece esa imagen.
+
+El mapa usa el estilo `open-street-map`, con atribución de OpenStreetMap y sin una clave adicional de teselas. El antiguo estilo de CARTO devolvía imágenes con “API KEY REQUIRED”.
+
+APOD valida el contenido antes de guardarlo en caché: una respuesta HTTP 200 con “NASA Science” o el logo genérico no es una fotografía válida. En ese caso consulta el [endpoint WordPress oficial](https://github.com/nasa/apod-api), usando `YYMMDD`. En este nuevo contrato, `url` apunta al artículo y `hdurl` a la imagen; se normalizan antes de enviarlos al navegador. Los videos usan su URL de inserción, y los créditos y explicaciones se convierten a texto. Si falla la descarga de una imagen se muestra un mensaje y el enlace a la publicación original.
 
 La caché reside en memoria **por proceso**: se pierde al reiniciar y no se comparte entre varios servidores. Para despliegues con múltiples procesos conviene una caché externa. Un resultado completo sin caché necesita nueve solicitudes (siete DONKI, una EONET y una NeoWs); APOD se consulta por separado. El servidor incluido es para desarrollo local.
 
