@@ -11,6 +11,9 @@ import re
 
 from flask import Blueprint, jsonify, request
 
+from app import ml
+from app.collector import update_recent
+from app.db import store
 from app.nasa_client import nasa_client, NasaApiError
 from app.stats import (
     donki_counts_by_type, donki_time_series, donki_flare_classes,
@@ -48,7 +51,7 @@ def get_config():
     """Devuelve la configuración pública del dashboard."""
     return jsonify({
         "is_configured": settings.is_configured,
-        "limits": {"donki_days": 365, "eonet_days": 3660, "neo_days": 7},
+        "limits": {"donki_days": 61, "eonet_days": 3660, "neo_days": 7},
         "defaults": {
             "donki_days": settings.default_donki_days,
             "eonet_days": settings.default_eonet_days,
@@ -79,7 +82,7 @@ def fetch_data():
         return jsonify({"error": "Faltan parámetros de fecha."}), 400
 
     try:
-        _validate_range(donki_s, donki_e, "DONKI", 365)
+        _validate_range(donki_s, donki_e, "DONKI", 61)
         _validate_range(eonet_s, eonet_e, "EONET", 3660)
         _validate_range(neo_s, neo_e, "NeoWs", 7)
     except ValueError as exc:
@@ -247,3 +250,62 @@ def get_apod():
         return response, exc.status_code
 
     return jsonify(apod_summary(data))
+
+
+# ------------------------------------------------------------------ #
+# Predicciones: dataset, modelos, pronostico y backtest
+# ------------------------------------------------------------------ #
+@api_bp.route("/predictions")
+def get_predictions():
+    """Estado del pipeline: volumen del dataset, metricas de cada modelo,
+    pronostico con los datos vigentes y backtest de los ultimos dias."""
+    dataset = store.dataset_summary()
+    models = store.registered_models()
+    if not models:
+        return jsonify({
+            "ready": False,
+            "dataset": dataset,
+            "models": [],
+            "forecasts": {},
+            "backtests": {},
+            "message": "Aun no hay modelos entrenados. Ejecuta scripts/backfill.py "
+                       "y scripts/train_models.py, o usa los botones de la pestana "
+                       "Predicciones.",
+        })
+    forecasts = ml.predict(store)
+    backtests = ml.backtest(store, days=60)
+    return jsonify({
+        "ready": True,
+        "dataset": dataset,
+        "models": models,
+        "forecasts": forecasts,
+        "backtests": backtests,
+    })
+
+
+@api_bp.route("/collect", methods=["POST"])
+def run_collect():
+    """Refresca los ultimos dias de todas las fuentes (idempotente)."""
+    try:
+        summary = update_recent(store)
+    except Exception as exc:  # el dashboard sigue usable ante cualquier fallo
+        return jsonify({"ok": False, "error": f"Recoleccion fallida: {exc}"}), 502
+    return jsonify({"ok": True, "summary": summary, "dataset": store.dataset_summary()})
+
+
+@api_bp.route("/train", methods=["POST"])
+def run_train():
+    """Entrena todos los modelos con el dataset vigente."""
+    counts = store.counts()
+    if counts.get("donki_events", 0) < 50 and counts.get("eonet_events", 0) < 50:
+        return jsonify({
+            "ok": False,
+            "error": "El dataset esta casi vacio. Ejecuta primero el backfill: "
+                     "python scripts/backfill.py --source all",
+        }), 400
+    try:
+        results = ml.train_all(store)
+    except Exception as exc:
+        return jsonify({"ok": False, "error": f"Entrenamiento fallido: {exc}"}), 500
+    trained = sum(1 for r in results.values() if isinstance(r, dict) and r.get("status") == "ok")
+    return jsonify({"ok": True, "trained": trained, "total": len(results), "results": results})

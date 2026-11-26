@@ -22,6 +22,12 @@ def create_app() -> Flask:
     from app.api import api_bp
     app.register_blueprint(api_bp)
 
+    # Dataset local del pipeline de predicciones y tareas programadas
+    from app.db import store
+    store.init()
+    from app.scheduler import start_scheduler
+    start_scheduler()
+
     # Ruta raiz: servir index.html
     @app.route("/")
     def index():

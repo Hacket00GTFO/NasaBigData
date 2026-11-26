@@ -45,3 +45,9 @@ Thumbs.db
 # Cache
 .cache/
 .pytest_cache/
+
+# Dataset y modelos generados por el pipeline de predicciones
+state/*.db
+state/*.db-shm
+state/*.db-wal
+state/models/

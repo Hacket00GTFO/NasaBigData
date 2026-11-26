@@ -82,8 +82,12 @@ function validateDates() {
 }
 
 function renderActiveTab() {
-    if (!lastData) return;
     const tab = document.querySelector(".tab-btn.active").dataset.tab;
+    if (tab === "predictions") {
+        fetchPredictions();
+        return;
+    }
+    if (!lastData) return;
     if (renderedTabs.has(tab)) return;
     if (tab === "donki") renderDonkiDetail(lastData.donki);
     if (tab === "eonet") renderEonet(lastData.eonet);
@@ -786,6 +790,235 @@ async function fetchApod() {
 /* ============================================================
    Tabs
    ============================================================ */
+/* ============================================================
+   Predicciones (dataset local + modelos scikit-learn)
+   ============================================================ */
+let isPredLoading = false;
+let isPredBusy = false;
+
+async function postJSON(url, timeoutMs) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs || requestTimeoutMs);
+    try {
+        const resp = await fetch(url, { method: "POST", signal: controller.signal });
+        if (!resp.ok) {
+            let message = `HTTP ${resp.status}`;
+            try {
+                const body = await resp.json();
+                if (body && body.error) message = body.error;
+            } catch { /* respuesta sin JSON */ }
+            throw new Error(message);
+        }
+        return await resp.json();
+    } finally {
+        clearTimeout(timer);
+    }
+}
+
+function predModelLabel(model) {
+    if (model.frame === "flare") {
+        if (model.name === "flares_next_day") return "Flares solares (24 h)";
+        if (model.name === "flares_week_total") return "Flares solares (7 días)";
+        if (model.name === "flares_x_next_day") return "Flare clase X (24 h)";
+        return model.name;
+    }
+    if (model.frame && model.frame.startsWith("eonet:")) {
+        const cat = model.frame.slice(6);
+        return cat.charAt(0).toUpperCase() + cat.slice(1) + " (24 h)";
+    }
+    return model.name;
+}
+
+function fmtPredValue(forecast) {
+    if (!forecast || forecast.status !== "ok") return "--";
+    if (forecast.kind === "classification") {
+        return (forecast.probability * 100).toFixed(1) + "%";
+    }
+    return Number(forecast.value).toFixed(1);
+}
+
+function setPredKpi(valueId, subId, forecast) {
+    $(valueId).textContent = fmtPredValue(forecast);
+    if (!forecast || forecast.status !== "ok") {
+        $(subId).textContent = "sin pronóstico disponible";
+        return;
+    }
+    let text = `para ${forecast.date} · datos hasta ${forecast.last_day}`;
+    if (forecast.kind === "classification" && forecast.threshold !== undefined) {
+        text += forecast.alert
+            ? " · ALERTA de clase X"
+            : ` · umbral calibrado ${(forecast.threshold * 100).toFixed(1)}%`;
+    }
+    $(subId).textContent = text;
+}
+
+function renderPredBacktest(containerId, backtest, fallbackMsg) {
+    if (!backtest || !backtest.dates || backtest.dates.length === 0) {
+        emptyFigure(containerId, fallbackMsg);
+        return;
+    }
+    const isClf = backtest.kind === "classification";
+    const traces = [
+        {
+            x: backtest.dates,
+            y: isClf ? backtest.actual.map(v => Math.round(v)) : backtest.actual,
+            name: "Real",
+            type: "scatter", mode: "lines",
+            line: { color: "#f87171", width: 2 },
+        },
+        {
+            x: backtest.dates,
+            y: backtest.predicted,
+            name: isClf ? "Probabilidad" : "Predicho",
+            type: "scatter", mode: "lines",
+            line: { color: "#fbbf24", width: 2, dash: "dot" },
+        },
+    ];
+    const layout = {
+        ...DARK_LAYOUT,
+        showlegend: true,
+        legend: { orientation: "h", y: 1.12 },
+        hovermode: "x unified",
+        margin: { l: 44, r: 20, t: 30, b: 40 },
+    };
+    Plotly.react(containerId, traces, layout, { responsive: true, displayModeBar: false });
+}
+
+function renderPredictions(data) {
+    const dataset = data.dataset || { tables: [], last_runs: [] };
+    renderTable("pred-dataset-table", (dataset.tables || []).map(t => ({
+        tabla: t.table, filas: fmtNum(t.rows), desde: t.from || "--", hasta: t.to || "--",
+    })), [
+        { key: "tabla", label: "Tabla" },
+        { key: "filas", label: "Filas" },
+        { key: "desde", label: "Desde" },
+        { key: "hasta", label: "Hasta" },
+    ]);
+    renderTable("pred-runs-table", (dataset.last_runs || []).map(r => ({
+        fuente: r.source, tipo: r.kind, filas: fmtNum(r.rows),
+        estado: r.ok ? "OK" : "Con errores", fecha: r.ran_at,
+    })), [
+        { key: "fuente", label: "Fuente" },
+        { key: "tipo", label: "Modo" },
+        { key: "filas", label: "Filas" },
+        { key: "estado", label: "Estado" },
+        { key: "fecha", label: "Ejecutado (UTC)" },
+    ]);
+
+    const forecasts = data.forecasts || {};
+    setPredKpi("pred-flares", "pred-flares-sub", forecasts.flares_next_day);
+    setPredKpi("pred-flares-x", "pred-flares-x-sub", forecasts.flares_x_next_day);
+    setPredKpi("pred-flares-week", "pred-flares-week-sub", forecasts.flares_week_total);
+
+    const models = data.models || [];
+    // Preferir la categoria con mas eventos historicos (Wildfires suele
+    // ser la primera); si no existe, el primer modelo EONET disponible.
+    const eonetModel = models.find(m => m.name === "eonet_wildfires_next_day")
+        || models.find(m => m.name.startsWith("eonet_"));
+    if (eonetModel) {
+        $("pred-eonet-label").textContent = predModelLabel(eonetModel);
+    }
+    setPredKpi("pred-eonet", "pred-eonet-sub", eonetModel ? forecasts[eonetModel.name] : null);
+
+    renderPredBacktest("pred-backtest-flares",
+        data.backtests && data.backtests.flares_next_day,
+        "Entrena los modelos para ver el backtest");
+    const eonetBacktestName =
+        Object.keys(data.backtests || {}).find(n => n === "eonet_wildfires_next_day")
+        || Object.keys(data.backtests || {}).find(n => n.startsWith("eonet_"));
+    if (eonetBacktestName) {
+        const owner = models.find(m => m.name === eonetBacktestName) || { frame: "eonet:", name: eonetBacktestName };
+        $("pred-eonet-backtest-title").textContent = `${predModelLabel(owner)}: predicho vs real (60 días)`;
+        renderPredBacktest("pred-backtest-eonet", data.backtests[eonetBacktestName], "Sin backtest");
+    } else {
+        emptyFigure("pred-backtest-eonet", "Sin modelos EONET disponibles");
+    }
+
+    renderTable("pred-metrics-table", models.map(m => {
+        const met = m.metrics || {};
+        const isClf = m.kind === "classification";
+        return {
+            modelo: predModelLabel(m),
+            tipo: isClf ? "Clasificación" : (m.kind === "persistence" ? "Persistencia" : "Regresión"),
+            metrica: isClf
+                ? `AUC ${met.auc ?? "--"} · F1 ${met.f1 ?? "--"} · Prec ${met.precision ?? "--"} · Rec ${met.recall ?? "--"}`
+                : `MAE ${met.mae ?? "--"} · RMSE ${met.rmse ?? "--"} · R² ${met.r2 ?? "--"}`,
+            baseline: isClf
+                ? `dias con clase X ${((met.positive_rate ?? 0) * 100).toFixed(1)}%`
+                : `variante ${met.variant ?? "--"} · MAE base ${met.baseline_mae ?? "--"} · skill ${met.skill ?? "--"}`,
+            prueba: met.test_from ? `${met.test_from} → ${met.test_to}` : "--",
+            entrenado: m.trained_at,
+        };
+    }), [
+        { key: "modelo", label: "Modelo" },
+        { key: "tipo", label: "Tipo" },
+        { key: "metrica", label: "Métricas (prueba)" },
+        { key: "baseline", label: "Referencia" },
+        { key: "prueba", label: "Periodo de prueba" },
+        { key: "entrenado", label: "Entrenado" },
+    ]);
+}
+
+async function fetchPredictions() {
+    if (isPredLoading) return;
+    isPredLoading = true;
+    $("pred-status").textContent = "Cargando predicciones...";
+    skeletonChart("pred-backtest-flares", 320);
+    skeletonChart("pred-backtest-eonet", 320);
+    try {
+        const data = await fetchJSON("/api/predictions");
+        if (!data.ready) {
+            $("pred-status").textContent = data.message || "Aún no hay modelos entrenados.";
+        } else {
+            $("pred-status").textContent = "";
+        }
+        renderPredictions(data);
+    } catch (e) {
+        $("pred-status").textContent = "Error al cargar las predicciones del servidor.";
+        emptyFigure("pred-backtest-flares", "Error de conexión");
+        emptyFigure("pred-backtest-eonet", "Error de conexión");
+    } finally {
+        isPredLoading = false;
+    }
+}
+
+async function predCollectNow() {
+    if (isPredBusy) return;
+    isPredBusy = true;
+    const btn = $("btn-pred-collect");
+    setButtonLoading(btn, true);
+    $("pred-status").textContent = "Recolectando los últimos días de todas las fuentes...";
+    try {
+        await postJSON("/api/collect", requestTimeoutMs);
+        $("pred-status").textContent = "Dataset actualizado con los datos más recientes.";
+    } catch (e) {
+        $("pred-status").textContent = "Error al recolectar: " + (e.message || e);
+    } finally {
+        setButtonLoading(btn, false);
+        isPredBusy = false;
+        fetchPredictions();
+    }
+}
+
+async function predTrainNow() {
+    if (isPredBusy) return;
+    isPredBusy = true;
+    const btn = $("btn-pred-train");
+    setButtonLoading(btn, true);
+    $("pred-status").textContent = "Entrenando modelos con el dataset vigente...";
+    try {
+        const result = await postJSON("/api/train", 300000);
+        $("pred-status").textContent =
+            `Entrenamiento terminado: ${result.trained}/${result.total} modelos listos.`;
+    } catch (e) {
+        $("pred-status").textContent = "Error al entrenar: " + (e.message || e);
+    } finally {
+        setButtonLoading(btn, false);
+        isPredBusy = false;
+        fetchPredictions();
+    }
+}
+
 function initTabs() {
     const tabs = document.querySelectorAll(".tab-btn");
     tabs.forEach(btn => {
@@ -820,6 +1053,8 @@ document.addEventListener("DOMContentLoaded", () => {
     $("btn-fetch").addEventListener("click", fetchData);
     $("btn-apod").addEventListener("click", fetchApod);
     $("btn-refresh").addEventListener("click", fetchData);
+    $("btn-pred-collect").addEventListener("click", predCollectNow);
+    $("btn-pred-train").addEventListener("click", predTrainNow);
 
     document.querySelectorAll(".date-input").forEach(input => {
         input.addEventListener("keydown", (e) => {

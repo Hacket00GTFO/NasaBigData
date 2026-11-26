@@ -320,6 +320,10 @@
                 <i data-lucide="image" class="tab-icon"></i>
                 <span>APOD</span>
             </button>
+            <button class="tab-btn" data-tab="predictions" role="tab" aria-selected="false" aria-controls="tab-predictions">
+                <i data-lucide="trending-up" class="tab-icon"></i>
+                <span>Predicciones</span>
+            </button>
         </div>
 
         <!-- Tab: DONKI -->
@@ -433,6 +437,87 @@
                     <h3 class="card-title">Explicación</h3>
                 </div>
                 <p id="apod-explanation" class="apod-explanation">Pulsa "Obtener APOD" para ver la imagen astronómica del día.</p>
+            </div>
+        </div>
+
+        <!-- Tab: Predicciones -->
+        <div class="tab-panel" id="tab-predictions" role="tabpanel">
+            <div class="pred-actions">
+                <button id="btn-pred-collect" class="btn-ghost" type="button" title="Refrescar los últimos días del dataset">
+                    <i data-lucide="download" class="btn-icon"></i>
+                    <span class="btn-text">Recolectar datos</span>
+                    <span class="btn-spinner hidden"></span>
+                </button>
+                <button id="btn-pred-train" class="btn-primary" type="button" title="Entrenar los modelos de predicción">
+                    <i data-lucide="brain-circuit" class="btn-icon"></i>
+                    <span class="btn-text">Entrenar modelos</span>
+                    <span class="btn-spinner hidden"></span>
+                </button>
+                <span id="pred-status" class="pred-status" role="status" aria-live="polite"></span>
+            </div>
+
+            <div class="stat-grid stat-grid-4">
+                <div class="stat-card">
+                    <div class="stat-label">Flares solares · 24 h</div>
+                    <div class="stat-value" id="pred-flares">--</div>
+                    <div class="stat-sub" id="pred-flares-sub">--</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">Prob. flare clase X · 24 h</div>
+                    <div class="stat-value" id="pred-flares-x">--</div>
+                    <div class="stat-sub" id="pred-flares-x-sub">--</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">Flares · próximos 7 días</div>
+                    <div class="stat-value" id="pred-flares-week">--</div>
+                    <div class="stat-sub" id="pred-flares-week-sub">--</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label" id="pred-eonet-label">Eventos EONET · 24 h</div>
+                    <div class="stat-value" id="pred-eonet">--</div>
+                    <div class="stat-sub" id="pred-eonet-sub">--</div>
+                </div>
+            </div>
+
+            <div class="grid-2">
+                <div class="card">
+                    <div class="card-header">
+                        <h3 class="card-title">Flares: predicho vs real (60 días)</h3>
+                        <span class="card-badge">Backtest</span>
+                    </div>
+                    <div id="pred-backtest-flares" class="chart" style="height:320px;"></div>
+                </div>
+                <div class="card">
+                    <div class="card-header">
+                        <h3 class="card-title" id="pred-eonet-backtest-title">Eventos EONET: predicho vs real (60 días)</h3>
+                        <span class="card-badge">Backtest</span>
+                    </div>
+                    <div id="pred-backtest-eonet" class="chart" style="height:320px;"></div>
+                </div>
+            </div>
+
+            <div class="card">
+                <div class="card-header">
+                    <h3 class="card-title">Evaluación de los modelos</h3>
+                    <span class="card-badge">Fuera de muestra</span>
+                </div>
+                <div id="pred-metrics-table" class="table-wrap"></div>
+            </div>
+
+            <div class="grid-2">
+                <div class="card">
+                    <div class="card-header">
+                        <h3 class="card-title">Dataset acumulado (SQLite)</h3>
+                        <span class="card-badge">Pipeline local</span>
+                    </div>
+                    <div id="pred-dataset-table" class="table-wrap"></div>
+                </div>
+                <div class="card">
+                    <div class="card-header">
+                        <h3 class="card-title">Últimas ejecuciones del pipeline</h3>
+                    </div>
+                    <div id="pred-runs-table" class="table-wrap"></div>
+                </div>
             </div>
         </div>
 
