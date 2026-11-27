@@ -193,6 +193,8 @@ def parse_donki_events(event_type: str, raw: List[dict]) -> List[Tuple[str, str,
                 extra["source_location"] = ev["sourceLocation"]
             if ev.get("activeRegionNum") is not None:
                 extra["active_region"] = ev["activeRegionNum"]
+            if ev.get("peakTime"):
+                extra["peak_time"] = ev["peakTime"]
         elif event_type == "CME":
             for key in ("speed", "halfAngle", "latitude", "longitude", "type"):
                 if ev.get(key) is not None:

@@ -1,0 +1,137 @@
+{
+  "generado": "2026-11-26 18:28 UTC",
+  "flare_severity": {
+    "n_eventos": 3368,
+    "positivos": 2780,
+    "tasa_positivos": 0.825,
+    "n_train": 2694,
+    "n_test": 674,
+    "importancias_rf": [
+      [
+        "region_activa",
+        0.219
+      ],
+      [
+        "ciclo_cos",
+        0.1556
+      ],
+      [
+        "ciclo_sin",
+        0.1273
+      ],
+      [
+        "doy_cos",
+        0.1138
+      ],
+      [
+        "doy_sin",
+        0.1101
+      ],
+      [
+        "duracion_min",
+        0.0987
+      ],
+      [
+        "latitud",
+        0.0884
+      ],
+      [
+        "longitud",
+        0.0871
+      ]
+    ],
+    "logistica": {
+      "auc": 0.674,
+      "umbral": 0.0893,
+      "f1": 0.907,
+      "recall": 0.998,
+      "precision": 0.831,
+      "confusion": {
+        "vp": 555,
+        "fp": 113,
+        "fn": 1,
+        "vn": 5
+      }
+    },
+    "random_forest": {
+      "auc": 0.828,
+      "umbral": 0.2673,
+      "f1": 0.908,
+      "recall": 0.977,
+      "precision": 0.848,
+      "confusion": {
+        "vp": 543,
+        "fp": 97,
+        "fn": 13,
+        "vn": 21
+      }
+    }
+  },
+  "fire_persistence": {
+    "n_eventos": 21549,
+    "positivos": 553,
+    "tasa_positivos": 0.026,
+    "n_train": 17239,
+    "n_test": 4310,
+    "importancias_rf": [
+      [
+        "latitud",
+        0.2648
+      ],
+      [
+        "longitud",
+        0.2253
+      ],
+      [
+        "doy_sin",
+        0.1366
+      ],
+      [
+        "mes_sin",
+        0.0996
+      ],
+      [
+        "doy_cos",
+        0.0853
+      ],
+      [
+        "anyo_norm",
+        0.0718
+      ],
+      [
+        "mes_cos",
+        0.0586
+      ],
+      [
+        "densidad_dia",
+        0.058
+      ]
+    ],
+    "logistica": {
+      "auc": 0.824,
+      "umbral": 0.7565,
+      "f1": 0.193,
+      "recall": 0.369,
+      "precision": 0.131,
+      "confusion": {
+        "vp": 41,
+        "fp": 273,
+        "fn": 70,
+        "vn": 3926
+      }
+    },
+    "random_forest": {
+      "auc": 0.967,
+      "umbral": 0.7852,
+      "f1": 0.581,
+      "recall": 0.595,
+      "precision": 0.569,
+      "confusion": {
+        "vp": 66,
+        "fp": 50,
+        "fn": 45,
+        "vn": 4149
+      }
+    }
+  }
+}
